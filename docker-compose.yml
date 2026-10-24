@@ -1,0 +1,33 @@
+services:
+  docker-update-ui:
+    build: .
+    image: docker-update-ui:latest
+    container_name: docker-update-ui
+    restart: unless-stopped
+    ports:
+      - "${UI_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      # Docker-Socket: Zugriff auf alle Container und Images
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Backup-Verzeichnis: im Container derselbe Pfad wie auf dem Host
+      - /docker/backups:/docker/backups
+      # Persistente Einstellungen und Zuordnung Container -> Datenverzeichnis
+      - ./data:/config
+      # Datenverzeichnisse 1:1 einbinden (Host-Pfad = Container-Pfad).
+      # Für Rollbacks werden Schreibrechte benötigt, für reine Backups genügen Leserechte.
+      - /docker/homeassistant:/docker/homeassistant
+      # - /var/lib/docker/volumes/portainer_data/_data:/var/lib/docker/volumes/portainer_data/_data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
