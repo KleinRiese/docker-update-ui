@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ detail.name }}{% endblock %}
+
+{% block content %}
+<div class="crumb"><a href="/">← Alle Container</a></div>
+
+<div class="page-head">
+  <div>
+    <h1 class="mono">{{ detail.name }}</h1>
+    <p class="muted mono">{{ detail.image }}</p>
+  </div>
+  <div class="page-actions">
+    {% if detail.is_self %}<span class="pill neutral">dieses Tool</span>{% endif %}
+    <span class="pill {{ detail.hint_class }}">{{ detail.hint }}</span>
+  </div>
+</div>
+
+<div id="container-summary">
+  {% include "_summary.html" %}
+</div>
+
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head"><h2>Update</h2></div>
+    {% if detail.is_self %}
+      <div class="notice">
+        Dieses Tool aktualisiert sich nicht selbst. Bitte auf dem Host mit
+        <code>docker compose pull &amp;&amp; docker compose up -d</code> erneuern.
+      </div>
+    {% elif not data_dir %}
+      <div class="notice warn">
+        Für diesen Container ist noch kein Datenverzeichnis hinterlegt. Bitte
+        rechts auswählen – ohne Datenverzeichnis wird kein Update gestartet.
+      </div>
+      <button class="button ghost" type="button"
+              hx-get="/containers/{{ detail.name|urlencode }}/check"
+              hx-target="#check-area" hx-swap="innerHTML">Update dennoch prüfen</button>
+    {% else %}
+      <p class="muted">
+        Prüft per Pull, ob ein neueres Image vorliegt, und zeigt die geplanten
+        Schritte. Der Pull kann einen Moment dauern.
+      </p>
+      <div class="row">
+        <button class="button primary" type="button"
+                hx-get="/containers/{{ detail.name|urlencode }}/check"
+                hx-target="#check-area" hx-swap="innerHTML"
+                hx-indicator="#check-spinner">Update prüfen</button>
+        <button class="button ghost" type="button"
+                hx-post="/containers/{{ detail.name|urlencode }}/snapshot"
+                hx-target="#job-area" hx-swap="innerHTML"
+                hx-disabled-elt="this"
+                hx-confirm="Snapshot für '{{ detail.name }}' erstellen?&#10;&#10;Der Container wird kurz gestoppt, Daten, Image-Tag und Konfiguration werden gesichert. Es wird nichts aktualisiert.">Snapshot</button>
+        <span id="check-spinner" class="htmx-indicator muted">prüfe Registry …</span>
+      </div>
+      <p class="hint-text">
+        Snapshot = Sicherungspunkt ohne Update (Daten, Rollback-Image,
+        Konfiguration). Anschließend im Bereich „Backups &amp; Rollbacks“
+        wiederherstellbar.
+      </p>
+    {% endif %}
+    <div id="check-area"></div>
+    <div id="job-area"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Datenverzeichnis</h2></div>
+    {% if data_dir %}
+      <p class="muted">Hinterlegt: <span class="mono">{{ data_dir }}</span></p>
+      {% if not data_persistent %}
+        <div class="notice warn">
+          Dieses Verzeichnis ist im Tool-Container nicht als Volume eingebunden.
+          Bitte <code>- {{ data_dir }}:{{ data_dir }}</code> ergänzen, sonst schlägt
+          das Backup fehl oder landet in der Container-Schicht.
+        </div>
+      {% endif %}
+    {% else %}
+      <p class="muted">Dieses Verzeichnis wird vor jedem Update archiviert und beim Rollback wiederhergestellt.</p>
+    {% endif %}
+    <form method="post" action="/containers/{{ detail.name|urlencode }}/data-dir" class="row">
+      <input id="data-dir-input" name="path" value="{{ data_dir or settings.browse_dir }}"
+             placeholder="/docker/mein-container" spellcheck="false" autocomplete="off">
+      <button type="submit" class="button primary">Speichern</button>
+      <button type="button" class="button ghost" data-open-picker="#dir-picker">Durchsuchen</button>
+    </form>
+    <p class="hint-text">
+      Der Ordner muss im Tool-Container unter demselben Pfad verfügbar sein, z. B.
+      <code>- {{ data_dir or '/docker/mein-container' }}:{{ data_dir or '/docker/mein-container' }}</code>
+    </p>
+    {% if backup_persistent is defined and not backup_persistent %}
+      <div class="notice warn">
+        Das Backup-Verzeichnis ist nicht als Volume eingebunden – erstellte Backups
+        gehen beim Neuerstellen des Tool-Containers verloren.
+      </div>
+    {% endif %}
+    <div id="dir-picker" class="picker" hidden>
+      <div class="picker-head">
+        <strong>Verzeichnis wählen</strong>
+        <button type="button" class="button ghost small" data-close-picker>Schließen</button>
+      </div>
+      <div id="dir-picker-body" class="picker-body">
+        <button class="button ghost small" type="button"
+                hx-get="/browse?path={{ settings.browse_dir|urlencode }}"
+                hx-target="#dir-picker-body" hx-swap="innerHTML">Start: {{ settings.browse_dir }}</button>
+      </div>
+      <p class="hint-text">Auswahl übernimmt den Pfad in das Feld – anschließend speichern.</p>
+    </div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Backups &amp; Rollbacks</h2>
+    <a class="button ghost small" href="/containers/{{ detail.name|urlencode }}/backups">Alle anzeigen</a>
+  </div>
+  <div id="backup-area">
+    {% include "_backups.html" %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% if error %}
+  <div class="notice err">{{ error }}</div>
+{% elif plan %}
+  {% set check = plan.check %}
+  <div class="check-result">
+    <div class="check-head">
+      <span class="pill {{ 'update' if check.updateable else 'fixed' }}">{{ check.status }}</span>
+    </div>
+    <p class="muted">{{ check.detail }}</p>
+
+    <dl class="facts compact">
+      <div><dt>Aktuelles Image</dt><dd class="mono small">{{ plan.current }}</dd></div>
+      <div><dt>Ziel</dt><dd class="mono small">{{ plan.target }}</dd></div>
+      <div><dt>Datenverzeichnis</dt><dd class="mono small">{{ plan.data_dir or 'nicht hinterlegt' }}</dd></div>
+      <div><dt>Backups</dt><dd class="mono small">{{ plan.backup_dir }}</dd></div>
+    </dl>
+
+    {% if backup_persistent is defined and not backup_persistent %}
+      <div class="notice warn">
+        Das Backup-Verzeichnis liegt nicht auf einem eingebundenen Volume – die
+        Sicherung wäre nicht dauerhaft. Bitte zuerst die Volumes prüfen.
+      </div>
+    {% endif %}
+
+    {% if not plan.data_dir %}
+      <div class="notice warn">
+        Bitte zuerst ein Datenverzeichnis hinterlegen – ohne Backup wird kein
+        Update gestartet.
+      </div>
+    {% elif check.updateable %}
+      <form hx-post="/containers/{{ container|urlencode }}/update"
+            hx-target="#job-area" hx-swap="innerHTML"
+            hx-disabled-elt="find button"
+            hx-confirm="{% if plan.mode == 'switch' %}Container '{{ container }}' auf das reguläre Image umstellen?&#10;&#10;Ablauf: aktuelles Image als Rollback-Punkt taggen, Container stoppen, Daten nach {{ plan.data_dir }} archivieren, Container neu erstellen und starten.{% else %}Container '{{ container }}' jetzt aktualisieren?&#10;&#10;Ablauf: aktuelles Image als Rollback-Punkt taggen, Container stoppen, Daten nach {{ plan.data_dir }} archivieren, Rollback-Skript erstellen, Update per Watchtower ausführen.{% endif %}">
+        <button class="button primary" type="submit">
+          {% if plan.mode == 'switch' %}Auf reguläres Image umstellen{% else %}Backup erstellen &amp; aktualisieren{% endif %}
+        </button>
+      </form>
+    {% else %}
+      <div class="notice">
+        Kein Update verfügbar – es wird kein Backup erstellt und nichts geändert.
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
