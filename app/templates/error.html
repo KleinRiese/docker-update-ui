@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    <p class="muted">Die Anfrage konnte nicht abgeschlossen werden.</p>
+  </div>
+</div>
+<div class="notice err">{{ message }}</div>
+<div class="row">
+  <a class="button ghost" href="/">Zur Übersicht</a>
+</div>
+{% endblock %}

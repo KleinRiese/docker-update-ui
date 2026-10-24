@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anmelden · Docker Update UI</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+<main class="login-card">
+  <div class="brand brand-large">
+    <span class="logo">⇪</span>
+    <span>Docker Update<span class="brand-sub">UI</span></span>
+  </div>
+  <p class="muted">Container-Updates, Daten-Backups und Rollbacks für diesen Docker-Host.</p>
+
+  {% if error %}<div class="flash err" role="alert">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/login" class="form">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>
+      Passwort
+      <input type="password" name="password" autocomplete="current-password" autofocus required>
+    </label>
+    <button class="button primary wide" type="submit">Anmelden</button>
+  </form>
+  <p class="hint-text">Das Passwort wird über <code>WEB_PASSWORD</code> gesetzt.</p>
+</main>
+</body>
+</html>
