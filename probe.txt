@@ -1,3 +1,0 @@
-mounts.append(fields[4].replace("\\040", " "))
-match = re.match(r"\s*([A-Z_]+)=\"?([^\"\n]*)\"?\s*$", line)
-/proc/self/mountinfo
