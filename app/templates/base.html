@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Docker Update{% endblock %} · Docker Update UI</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="logo">⇪</span>
+    <span>Docker Update<span class="brand-sub">UI</span></span>
+  </a>
+  <nav class="nav">
+    <a href="/" class="{{ 'active' if active == 'containers' else '' }}">Container</a>
+    <a href="/settings" class="{{ 'active' if active == 'settings' else '' }}">Einstellungen</a>
+  </nav>
+  <form method="post" action="/logout" class="logout">
+    <button class="link" type="submit">Abmelden</button>
+  </form>
+</header>
+<main class="container">
+  {% if msg %}<div class="flash ok" role="status">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err" role="alert">{{ err }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="footer">
+  <span>Docker Update UI · Alpine-Container mit Zugriff auf <code>/var/run/docker.sock</code></span>
+</footer>
+</body>
+</html>

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Einstellungen</h1>
+    <p class="muted">Verzeichnisse, Watchtower-Image und Aufbewahrung von Rollback-Punkten.</p>
+  </div>
+</div>
+
+{% if not backup_persistent %}
+  <div class="notice warn">
+    Das aktuelle Backup-Verzeichnis liegt nicht auf einem eingebundenen Volume.
+    Backups wären nicht dauerhaft – bitte den Pfad als Volume einbinden.
+  </div>
+{% endif %}
+
+<form method="post" action="/settings" class="panel form">
+  <div class="field">
+    <label for="backup_dir">Backup-Verzeichnis</label>
+    <input id="backup_dir" name="backup_dir" value="{{ settings.backup_dir }}" spellcheck="false" required>
+    <p class="hint-text">
+      Im Container unter demselben Pfad wie auf dem Host einbinden
+      (z. B. <code>- /docker/backups:/docker/backups</code>).
+      Standard: <code>{{ defaults.backup_dir }}</code>
+    </p>
+  </div>
+
+  <div class="field">
+    <label for="browse_dir">Startverzeichnis für die Ordnerauswahl</label>
+    <input id="browse_dir" name="browse_dir" value="{{ settings.browse_dir }}" spellcheck="false" required>
+    <p class="hint-text">Muss im Container sichtbar sein, z. B. <code>/docker</code>.</p>
+  </div>
+
+  <div class="field">
+    <label for="watchtower_image">Watchtower-Image</label>
+    <input id="watchtower_image" name="watchtower_image" value="{{ settings.watchtower_image }}" spellcheck="false" required>
+    <p class="hint-text">Wird für <code>--run-once --include-stopped</code> verwendet. Standard: <code>{{ defaults.watchtower_image }}</code></p>
+  </div>
+
+  <div class="field">
+    <label for="max_rollbacks">Rollback-Punkte pro Container</label>
+    <input id="max_rollbacks" name="max_rollbacks" type="number" min="1" max="50" value="{{ settings.max_rollbacks }}" required>
+    <p class="hint-text">Ältere Backups, Skripte und Rollback-Images werden automatisch gelöscht.</p>
+  </div>
+
+  <div class="row">
+    <button class="button primary" type="submit">Speichern</button>
+    <a class="button ghost" href="/">Zurück zur Übersicht</a>
+  </div>
+</form>
+
+<section class="panel">
+  <div class="panel-head"><h2>Datenverzeichnisse</h2></div>
+  {% if data_dirs %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Container</th><th>Verzeichnis</th><th></th></tr></thead>
+        <tbody>
+          {% for name, path in data_dirs.items() %}
+          <tr>
+            <td><a class="strong" href="/containers/{{ name|urlencode }}">{{ name }}</a></td>
+            <td class="mono small">{{ path }}</td>
+            <td class="right">
+              <form method="post" action="/settings/data-dirs/{{ name|urlencode }}/delete"
+                    data-confirm="Zuordnung für {{ name }} entfernen?">
+                <button class="button ghost small" type="submit">Entfernen</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="notice">Noch keine Datenverzeichnisse hinterlegt – das passiert beim ersten Update pro Container.</div>
+  {% endif %}
+</section>
+
+<section class="panel hint">
+  <h2>Volumes des Tool-Containers</h2>
+  <p>Die Oberfläche arbeitet mit den Pfaden, die sie im eigenen Container sieht. Deshalb müssen Host-Pfade 1:1 eingebunden werden:</p>
+  <pre class="code">volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+  - {{ settings.backup_dir }}:{{ settings.backup_dir }}
+  - {{ settings.browse_dir }}:{{ settings.browse_dir }}
+  - /docker/mein-container:/docker/mein-container</pre>
+  <p class="muted small">
+    Jedes Datenverzeichnis, das gesichert oder zurückgespielt werden soll, muss
+    ebenfalls 1:1 gemountet sein. Für Backups genügt Leserechte, für Rollbacks
+    werden Schreibrechte benötigt.
+  </p>
+</section>
+{% endblock %}
