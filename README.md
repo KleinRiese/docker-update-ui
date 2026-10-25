@@ -1,324 +1,269 @@
 # Docker Update UI
 
-Weboberfläche für Docker-Updates – als eigenständiges Alpine-Image. Sie übernimmt
-die Funktionen des Shell-Skripts `update.sh`: Container auswählen, Update prüfen,
-Daten-Backup erstellen, Image als Rollback-Punkt taggen, neues Image pullen und
-den Container neu erstellen, Rollback-Skript erzeugen und alte Rollback-Punkte
-aufräumen. Die Oberfläche ist auf Deutsch und Englisch verfügbar.
+A web interface for maintaining containers on a single Docker host. From the
+browser you can check for image updates, back up a container's data, create
+restore points, roll back to any of them, switch a container to a different tag,
+and schedule automatic update checks per container.
 
-Statt `dialog`/`whiptail` gibt es eine Weboberfläche (FastAPI + HTMX), die den
-Ablauf inklusive Live-Log im Browser zeigt.
+The interface runs as a small Alpine container (`kleinriese/docker-update-ui`,
+available for `linux/amd64` and `linux/arm64`) and talks to the host through the
+Docker socket. It is fully bilingual: German and English.
 
-## Funktionsumfang
+## Features
 
-- **Container-Übersicht** mit Image, Image-ID, Status und Update-Hinweis
-  (`update-fähig`, `fester Tag`, `ROLLBACK-AKTIV`).
-- **Update-Prüfung** per Pull: das gepullte Image wird mit dem Image des
-  laufenden Containers verglichen (zuverlässiger als Textauswertung).
-- **Snapshot auf Knopfdruck**: Sicherungspunkt (Daten, Image-Tag,
-  Konfiguration, Rollback-Skript) anlegen, ohne das Image zu aktualisieren.
-- **Backup des Datenverzeichnisses** (`tar.gz`) bei gestopptem Container.
-- **Rollback-Punkt**: das aktuelle Image wird als
-  `<repo>:rollback-<zeitstempel>` getaggt.
-- **Rollback-Skript** (`rollback_<container>_<zeitstempel>.sh`) für die
-  Ausführung auf dem Host sowie ein **JSON-Snapshot** der Container-Konfiguration.
-- **Update ohne Zusatz-Image**: neues Image pullen und den Container über die
-  Docker-API mit identischer Konfiguration neu erstellen – kein Watchtower,
-  kein `runlike`. Läuft ein Container auf einem Rollback-Image, wird er mit dem
-  regulären Tag (`:latest`) neu erstellt.
-- **Zweisprachig** (Deutsch/Englisch): Sprache folgt dem Browser
-  (`Accept-Language`), lässt sich über `DE | EN` in der Kopfzeile umschalten
-  und wird in einem Cookie gespeichert.
-- **Datenbackup abschaltbar**: Für zustandslose Container lässt sich pro
-  Container bestimmen, dass nur das Image als Rollback-Punkt gesichert wird.
-  Solche Punkte erscheinen mit dem Vermerk „nur Image“ und stellen beim
-  Rollback ausschließlich Image und Konfiguration wieder her. In der
-  Container-Übersicht steht in der Spalte Datenverzeichnis dann `N/A`.
-- **Tag-Wechsel**: In der Container-Ansicht lässt sich ein anderes Tag (oder eine
-  vollständige Referenz bzw. ein Digest) desselben Repositories eintragen. Der
-  Ablauf sichert zuerst einen Rollback-Punkt, pullt das Ziel-Image und erstellt
-  den Container mit identischer Konfiguration neu – nützlich, um von einem
-  Rollback-Tag oder von `latest` auf eine feste Version zu wechseln.
-- **Rollback per Klick**: Container stoppen/entfernen, Daten aus dem Backup
-  wiederherstellen, Container aus dem gespeicherten Snapshot mit dem
-  Rollback-Image neu erstellen und starten. Punkte der alten Skript-Version
-  (ohne JSON-Snapshot) lassen sich ebenfalls wiederherstellen; die
-  Konfiguration wird dann vom laufenden Container übernommen.
-- **Aufräumen**: pro Container bleiben die neuesten `max_rollbacks`
-  Rollback-Punkte (Backup, Skript, Snapshot, Image); ältere werden gelöscht,
-  verwaiste Images bereinigt.
-- **Automatische Update-Prüfung**: pro Container per Checkbox aktivierbar und
-  über einen Cron-Ausdruck (5 Felder) terminiert. Geprüft wird über den
-  Manifest-Digest der Registry – ohne das Image herunterzuladen. Drei Aktionen
-  stehen zur Wahl: nur prüfen, prüfen und per Webhook benachrichtigen oder
-  prüfen und automatisch aktualisieren (mit Rollback-Punkt wie beim manuellen
-  Update). Das Ergebnis erscheint in der Container-Liste und auf der
-  Detailseite.
-- **Einstellungen**: Backup-Verzeichnis, Startverzeichnis der Ordnerauswahl,
-  Anzahl der Rollback-Punkte und Webhook-URL für Benachrichtigungen – dauerhaft
-  in `/config`.
-- **Ordnerauswahl** im Browser statt Pfad-Tippen (mit manueller Eingabe).
+- **Container overview** with image, image ID, status, update hint and data
+  directory. Containers with data backup disabled show `N/A` in the directory
+  column.
+- **Manual update check** that pulls the image and compares it with the image of
+  the running container.
+- **Snapshot on demand**: create a restore point (data archive, rollback image
+  tag, container configuration, rollback script) without changing the image.
+- **Data backup** (`tar.gz`) taken while the container is stopped, so the archive
+  is consistent.
+- **Rollback point**: the current image is tagged as
+  `<repository>:rollback-<timestamp>` before anything changes.
+- **Rollback script** (`rollback_<container>_<timestamp>.sh`) and a JSON snapshot
+  of the container configuration next to every restore point.
+- **Update without extra images**: the new image is pulled and the container is
+  recreated through the Docker API from its stored configuration – same ports,
+  mounts, environment, networks, labels and restart policy.
+- **Tag switch**: enter a tag (`1.2.3`), a full reference in the same repository
+  or a digest, and the container is recreated on that image – useful to move
+  away from `latest` or back from a rollback tag.
+- **Restore with one click**: stop and remove the container, extract the data
+  archive, recreate the container from the stored snapshot with the rollback
+  image and start it. Points without a data archive restore image and
+  configuration only.
+- **Optional data backup per container**: state-less containers can be updated
+  with only the image as a restore point. Such points are marked as image-only.
+- **Automatic update checks** per container: cron schedule, three actions
+  (check only, check and notify, check and update), registry digest comparison
+  without downloading layers, and webhook notifications.
+- **Retention**: the newest `max_rollbacks` restore points per container are
+  kept; older backups, scripts, snapshots and rollback images are deleted.
+  Rollback images without a restore point can be removed from the interface.
+- **Settings** for backup directory, folder-picker start directory, number of
+  restore points and notification webhook, stored in `/config`.
+- **Folder picker** in the browser instead of typing paths, with manual input as
+  a fallback.
 
-## Schnellstart
+## Quick start
 
 ```bash
 cp .env.example .env
-# .env öffnen und WEB_PASSWORD setzen
-
+# open .env and set WEB_PASSWORD
 docker compose up -d --build
 ```
 
-Danach `http://<host>:8080` öffnen und mit dem Passwort aus `WEB_PASSWORD`
-anmelden.
+Open `http://<host>:8080` and sign in with the password from `WEB_PASSWORD`.
 
-Ohne Compose:
+Without Compose (prebuilt image):
 
 ```bash
-docker build -t docker-update-ui:latest .
-
 docker run -d --name docker-update-ui \
   --restart unless-stopped \
   -p 8080:8080 \
-  -e WEB_PASSWORD='bitte-aendern' \
+  -e WEB_PASSWORD='change-me' \
   -e TZ=Europe/Berlin \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /docker/backups:/docker/backups \
   -v "$PWD/data:/config" \
   -v /docker/homeassistant:/docker/homeassistant \
-  docker-update-ui:latest
+  kleinriese/docker-update-ui:latest
 ```
 
-## Volumes und Pfade
+The Compose file builds the image from this repository. To use the published
+image instead, replace the `image:` line in `docker-compose.yml` with
+`kleinriese/docker-update-ui:latest` and drop the `build:` line, or use the
+`docker run` command shown above.
 
-Die Anwendung arbeitet mit den Pfaden, die sie **im eigenen Container** sieht.
-Damit Rollback-Skripte und Zeitstempel auf dem Host passen, werden Host-Pfade
-**1:1** eingebunden – Host-Pfad = Container-Pfad:
+## Volumes and paths
 
-| Host | Container | Zweck |
+The application works with the paths it sees **inside its own container**.
+Host paths therefore have to be mounted **1:1** – host path = container path:
+
+| Host | Container | Purpose |
 | --- | --- | --- |
-| `/var/run/docker.sock` | `/var/run/docker.sock` | Docker-API |
-| `/docker/backups` | `/docker/backups` | Backups, Skripte, Snapshots |
-| `./data` | `/config` | Einstellungen, Datenverzeichnis-Zuordnung |
-| `/docker/homeassistant` | `/docker/homeassistant` | Beispiel-Datenverzeichnis |
+| `/var/run/docker.sock` | `/var/run/docker.sock` | Docker API |
+| `/docker/backups` | `/docker/backups` | Backups, scripts, snapshots |
+| `./data` | `/config` | Settings, container options |
+| `/docker/homeassistant` | `/docker/homeassistant` | Example data directory |
 
-Jedes Datenverzeichnis, das gesichert oder zurückgespielt werden soll, muss
-eingebunden sein. Für reine Backups genügen Leserechte, für Rollbacks werden
-Schreibrechte benötigt. Die Oberfläche warnt, wenn das Backup-Verzeichnis nicht
-auf einem Volume liegt, weil Backups dann in der Container-Schicht verschwinden
-würden.
+Every data directory that should be backed up or restored must be mounted as
+well. Read access is enough for backups; restores and rollbacks need write
+access. The interface warns when the backup directory is not on a mounted
+volume, because backups would then disappear with the container layer.
 
-## Bedienung
+## Using the interface
 
-1. **Container öffnen** (Übersicht → Details).
-2. Beim ersten Mal **Datenverzeichnis** wählen (Durchsuchen oder manuell) und
-   speichern. Sollen keine Daten gesichert werden, die Checkbox **Keine Daten
-   sichern (nur das Image als Rollback)** setzen – dann ist kein
-   Datenverzeichnis nötig.
-3. **Update prüfen** – das Image wird gepullt und verglichen.
-4. **Backup erstellen & aktualisieren** (bzw. **Image sichern & aktualisieren**)
-   bestätigen. Danach läuft der Ablauf mit Live-Log:
-   - Image taggen (`<repo>:rollback-<zeit>`)
-   - Container stoppen
-   - Daten archivieren (entfällt ohne Datenbackup)
-   - Snapshot + Rollback-Skript schreiben
-   - alte Rollback-Punkte löschen
-   - neues Image pullen und Container neu erstellen
-   - Container starten
-5. **Snapshot** neben *Update prüfen* legt jederzeit einen Sicherungspunkt an,
-   ohne das Image zu ändern. Der Container wird dafür kurz gestoppt und danach
-   wieder gestartet.
-6. **Tag umstellen** im Update-Panel wechselt auf ein anderes Tag desselben
-   Repositories, z. B. `1.2.3`, `latest` oder eine vollständige Referenz. Auch
-   hier wird vorher ein Rollback-Punkt gesichert; ohne Datenbackup (Checkbox)
-   entfällt nur der Daten-Teil.
-7. Auf der Seite **Backups & Rollbacks** stellt **Wiederherstellen** in der
-   Zeile eines Zeitpunkts genau diesen Stand wieder her (Daten + Container mit
-   dem Rollback-Image).
-8. Im Panel **Automatische Update-Prüfung** derselben Seite lässt sich ein
-   Zeitplan hinterlegen (Details im nächsten Abschnitt).
+1. **Open a container** (overview → details).
+2. Choose the **data directory** once and save it. To keep no data at all, tick
+   **Do not back up data (image only as rollback)** – then no directory is
+   needed. The settings page shows **No data backup** for such containers
+   instead of a path.
+3. **Check for update** pulls the image and compares it with the running one.
+4. **Create backup & update** (or **Save image & update**) starts the flow with a
+   live log:
+   - tag the current image as a rollback point,
+   - stop the container,
+   - archive the data (skipped without data backup),
+   - write the snapshot and the rollback script,
+   - delete outdated restore points,
+   - pull the new image and recreate the container,
+   - start the container.
+5. **Snapshot** next to *Check for update* creates a restore point at any time
+   without touching the image. The container is stopped briefly and started
+   again afterwards.
+6. **Switch tag** in the update panel moves the container to another tag of the
+   same repository, for example `1.2.3`, `latest` or a full reference. A restore
+   point is created first; without data backup only the image is saved.
+7. The **Backups & rollbacks** page lists every restore point. **Restore** in a
+   row brings back exactly that state: data plus container configuration with
+   the rollback image.
+8. The **Automatic update check** panel on the same page holds the schedule for
+   this container.
 
-## Automatische Update-Prüfung
+Every restore point also contains a standalone script that can be executed on
+the host, independently of the web interface:
 
-Im Detail-Bereich jedes Containers:
+```bash
+sudo bash /docker/backups/<container>/rollback_<container>_<timestamp>.sh
+```
 
-- **Zeitplan (Cron)**: fünf Felder `Minute Stunde Tag Monat Wochentag`
-  (0 = Sonntag). Beispiele: `0 */6 * * *` alle sechs Stunden, `30 4 * * *`
-  täglich 04:30, `0 5 * * 1` montags 05:00. Ungültige Ausdrücke werden beim
-  Speichern abgelehnt (auch solche, die nie zutreffen, etwa `0 0 30 2 *`).
-- **Aktion**: *nur prüfen*, *prüfen und benachrichtigen* oder *prüfen und
-  automatisch aktualisieren*. Das automatische Update nutzt denselben Ablauf
-  wie ein manuelles inklusive Rollback-Punkt und respektiert die
-  Container-Einstellung zum Datenbackup.
-- **Jetzt prüfen** führt die leichte Prüfung sofort aus, ohne auf den Zeitplan
-  zu warten.
+## Automatic update checks
 
-Die Prüfung vergleicht den Manifest-Digest der Registry mit dem lokalen Image
-(`docker inspect`-Distribution-API, also über den Daemon und damit auch mit
-dessen Registry-Zugangsdaten). Bei Multi-Arch-Images wird der Digest der
-passenden Plattform verwendet. Lässt sich kein Digest ermitteln – etwa bei
-selbst gebauten Images ohne `RepoDigests` – greift die bisherige Prüfung per
-Pull.
+Each container can be checked automatically:
 
-Der Scheduler läuft als Thread im Tool-Container: Er prüft alle 30 Sekunden, ob
-etwas fällig ist, überspringt Container mit laufendem Job sowie den eigenen
-Container und ignoriert Rollback-Tags und feste Tags. Verpasste Termine werden
-nach einem Neustart einmal nachgeholt, nicht gesammelt.
+- **Schedule (cron)**: five fields `minute hour day month weekday`
+  (0 = Sunday). Examples: `0 */6 * * *` every six hours, `30 4 * * *` daily at
+  04:30, `0 5 * * 1` Mondays at 05:00. Invalid expressions are rejected when
+  saving, including ones that never match (`0 0 30 2 *`).
+- **Action** when an update is available:
+  - *Check only* – record the result,
+  - *Check and notify* – send a webhook,
+  - *Check and update automatically* – run the same flow as a manual update,
+    including the restore point and the container's data-backup setting.
+- **Check now** runs the lightweight check immediately, without waiting for the
+  schedule.
 
-Benachrichtigungen gehen als JSON per POST an die Webhook-URL aus den
-Einstellungen:
+The check compares the registry manifest digest with the local image through the
+Docker daemon, so no layers are downloaded. For multi-architecture images the
+digest of the matching platform is used; when the local image has no repository
+digest (for example a locally built image) or the daemon cannot provide a
+comparable value, the interface falls back to the regular pull-based check.
+Private registries use the credentials the Docker daemon already has.
+
+The scheduler runs as a thread inside the tool container: it looks every 30
+seconds for due entries, skips containers with a running job, the tool's own
+container, rollback tags and fixed tags. Missed runs are caught up once after a
+restart, not collected. Times use the container's time zone (`TZ`).
+
+Results appear on the container page (last run, method, compared digests, next
+run) and in the overview table. Notifications are sent as JSON via POST to the
+webhook URL from the settings:
 
 ```json
 {
   "container": "homeassistant",
   "status": "available",
-  "label": "UPDATE VERFÜGBAR",
+  "label": "UPDATE AVAILABLE",
   "target": "ghcr.io/home-assistant/home-assistant:latest",
-  "message": "Docker Update: homeassistant – UPDATE VERFÜGBAR (...)",
+  "message": "Docker update: homeassistant – UPDATE AVAILABLE (...)",
   "time": "2026-10-25T14:00:00"
 }
 ```
 
-Der Rückweg ist jederzeit möglich: Das Rollback-Skript liegt im Backup-Ordner
-und funktioniert unabhängig von der Weboberfläche:
+## Settings
 
-```bash
-sudo bash /docker/backups/<container>/rollback_<container>_<zeitstempel>.sh
-```
+Everything can be changed in the **Settings** page; the environment variables
+only provide defaults:
 
-## Einstellungen
-
-In der Oberfläche unter **Einstellungen** oder per Umgebungsvariable:
-
-| Variable | Standard | Bedeutung |
+| Variable | Default | Meaning |
 | --- | --- | --- |
-| `WEB_PASSWORD` | – (**Pflicht**) | Passwort für die Anmeldung |
-| `BACKUP_DIR` | `/docker/backups` | Basisverzeichnis der Backups |
-| `BROWSE_DIR` | `/docker` | Startverzeichnis der Ordnerauswahl |
-| `MAX_ROLLBACKS` | `3` | Rollback-Punkte pro Container |
-| `CONFIG_DIR` | `/config` | Persistente Einstellungen |
-| `TZ` | `Europe/Berlin` | Zeitzone für Logs und Zeitstempel |
-| `SESSION_TTL` | `43200` | Sitzungsdauer in Sekunden |
-| `COOKIE_SECURE` | `0` | `1`, wenn die UI nur über HTTPS erreichbar ist |
-| `ALLOWED_ORIGINS` | – | Zusätzliche Hostnamen für die CSRF-Prüfung (Reverse Proxy) |
-| `CSRF_PROTECTION` | `1` | `0` deaktiviert die Herkunftsprüfung (nur mit anderer Absicherung) |
-| `STOP_TIMEOUT` | `30` | Wartezeit beim Stoppen eines Containers |
-| `DOCKER_TIMEOUT` | `600` | HTTP-Timeout für Docker-Aufrufe |
-| `SELF_CONTAINER` | Hostname | Name/ID des Tool-Containers (Schutz vor Selbst-Update) |
-| `NOTIFY_URL` | – | Standard-Webhook-URL für Benachrichtigungen |
-| `AUTO_CHECK_CRON` | `0 4 * * *` | Vorschlag für neue Zeitpläne in der Oberfläche |
-| `AUTO_CHECK_TICK` | `30` | Prüfintervall des Schedulers in Sekunden (min. 5) |
-| `NOTIFY_TIMEOUT` | `10` | Timeout für den Webhook-Aufruf in Sekunden |
+| `WEB_PASSWORD` | – (**required**) | Password for signing in |
+| `BACKUP_DIR` | `/docker/backups` | Base directory for backups |
+| `BROWSE_DIR` | `/docker` | Start directory for the folder picker |
+| `MAX_ROLLBACKS` | `3` | Restore points kept per container |
+| `CONFIG_DIR` | `/config` | Persistent settings |
+| `TZ` | `Europe/Berlin` | Time zone for logs, timestamps and schedules |
+| `NOTIFY_URL` | – | Default webhook URL for notifications |
+| `AUTO_CHECK_CRON` | `0 4 * * *` | Suggested schedule for new entries |
+| `AUTO_CHECK_TICK` | `30` | Scheduler interval in seconds (minimum 5) |
+| `NOTIFY_TIMEOUT` | `10` | Timeout for the webhook call in seconds |
+| `SESSION_TTL` | `43200` | Session lifetime in seconds |
+| `COOKIE_SECURE` | `0` | `1` when the UI is only reachable via HTTPS |
+| `ALLOWED_ORIGINS` | – | Additional host names for the origin check (reverse proxy) |
+| `CSRF_PROTECTION` | `1` | `0` disables the origin check (only with other protection) |
+| `STOP_TIMEOUT` | `30` | Grace period when stopping a container |
+| `DOCKER_TIMEOUT` | `600` | HTTP timeout for Docker calls |
+| `SELF_CONTAINER` | hostname | Name/ID of the tool container (self-update guard) |
+| `UI_PORT` | `8080` | Host port mapped by `docker-compose.yml` |
 
-## Migration vom Shell-Skript
+## Security
 
-Die bisherige Konfiguration kann übernommen werden. Dazu `settings.conf` und
-`backup_paths.conf` in den Config-Ordner legen (z. B. `data/`) und den Container
-einmal neu starten. Beim ersten Start importiert die Anwendung beide Dateien,
-solange noch keine `settings.json`/`data_dirs.json` existiert:
+Access to `/var/run/docker.sock` equals root on the host. Therefore:
 
-```bash
-mkdir -p data
-cp /docker/settings.conf /docker/backup_paths.conf data/   # falls vorhanden
-docker compose restart
-```
+- always set `WEB_PASSWORD` and use a strong password,
+- never expose the port to the internet unprotected (VPN/LAN or a reverse proxy
+  with TLS),
+- set `COOKIE_SECURE=1` once HTTPS is in front,
+- consider `cap_drop`/`read_only` for the tool container.
 
-Die vorhandenen Backups unter `/docker/backups` bleiben gültig; bereits
-erzeugte Rollback-Skripte funktionieren weiterhin auf dem Host.
+The application ships with password login, server-side session cookies
+(`HttpOnly`, `SameSite=Strict`), a brute-force brake, an origin check for
+writing requests and a restrictive content security policy.
 
-## Unterschiede zum Shell-Skript
+### “Request rejected (CSRF protection)”
 
-- **Kein `runlike`, kein Watchtower, kein Zusatz-Image:** Der Container wird
-  für Update, Rollback und Umschaltung aus der gespeicherten
-  Docker-Konfiguration (Inspect-Snapshot) neu erstellt. Exotische Optionen
-  bleiben dabei erhalten, weil die `HostConfig` vollständig übernommen wird.
-- **Datenbackup optional:** Für zustandslose Container lässt sich pro Container
-  abschalten, dass Daten archiviert werden. Der Rollback-Punkt besteht dann nur
-  aus Image-Tag und Konfiguration und wird in der Liste als „nur Image“
-  gekennzeichnet.
-- **Update-Prüfung** vergleicht Image-IDs statt Pull-Textausgaben.
-- **Backups werden nicht mehr verschoben, wenn das Verzeichnis ein Mountpunkt
-  ist:** Statt `mv` wird der Inhalt ersetzt (das Backup bleibt als
-  Sicherheitsnetz); nur bei nicht gemounteten Verzeichnissen legt die App wie
-  bisher `<verzeichnis>.before-rollback.<timestamp>` an.
-- **Selbst-Update blockiert:** Der eigene Container lässt sich nicht über die
-  Oberfläche aktualisieren.
-- **Aufräumen** berücksichtigt Backups, Skripte, Snapshots und Images
-  gemeinsam. Rollback-Images, die zu keinem Zeitpunkt gehören (etwa Reste
-  abgebrochener Läufe), werden als „ohne Sicherung“ markiert und lassen sich
-  über **Ohne Sicherung löschen** entfernen.
-- **Legacy-Punkte** aus dem Shell-Skript (nur `.tar.gz` + `.sh`, kein JSON)
-  sind wiederherstellbar; der fehlende Snapshot wird dabei aus dem laufenden
-  Container ergänzt.
+The origin check compares the `Origin` header with the requested host. It accepts
+the same host name on a different port and honours `X-Forwarded-Host`, so reverse
+proxies work. If the interface still rejects a request:
 
-## Sicherheit
+1. the error message contains `Origin` and `Host` – the cause is visible there;
+2. add the public address to `ALLOWED_ORIGINS`, e.g.
+   `ALLOWED_ORIGINS=https://docker.example.com`, and restart the container;
+3. only if an authenticating proxy protects access anyway: set
+   `CSRF_PROTECTION=0`.
 
-Der Zugriff auf `/var/run/docker.sock` entspricht Root-Rechten auf dem Host.
-Deshalb:
+## Limitations
 
-- `WEB_PASSWORD` immer setzen und ein starkes Passwort verwenden,
-- den Port nicht ungeschützt ins Internet stellen (VPN/LAN oder Reverse Proxy
-  mit TLS),
-- `COOKIE_SECURE=1`, sobald HTTPS vorgeschaltet ist,
-- optional `cap_drop`/`read_only` für den Tool-Container prüfen.
+- Single containers only; no Docker Swarm or stack updates.
+- Compose files are not modified – the tool updates images and containers. After
+  an update or tag switch, a later `docker compose up -d` restores the image
+  configured in the Compose file.
+- The Docker daemon must be able to reach the registry; private registries need
+  credentials in the daemon.
+- Backups stop the container briefly, so the data is consistent.
+- Automatic checks run only while the tool container is running; notifications
+  are webhook-only (no SMTP). Automatic updates appear in the container log
+  (`docker logs`), their result is stored and shown in the interface.
+- A multi-part `ENTRYPOINT` cannot be expressed as a single `--entrypoint`
+  argument in the generated rollback script; the script then contains a note.
+  Restoring through the interface is not affected.
 
-Die Anwendung bringt Login mit signierten Session-Cookies (serverseitig,
-`HttpOnly`, `SameSite=Strict`), Brute-Force-Bremse, Origin-Prüfung für
-schreibende Anfragen und eine restriktive Content-Security-Policy mit.
-
-### „Anfrage abgelehnt (CSRF-Schutz)“
-
-Die Herkunftsprüfung vergleicht den `Origin`-Header mit dem aufgerufenen Host.
-Sie akzeptiert denselben Hostnamen auch bei abweichendem Port und berücksichtigt
-`X-Forwarded-Host`, damit Reverse Proxys funktionieren. Meldet die Oberfläche
-trotzdem einen abgelehnten Zugriff:
-
-1. Im Fehlertext stehen `Origin` und `Host` – damit ist die Ursache sichtbar;
-2. öffentliche Adresse(n) in `ALLOWED_ORIGINS` eintragen, z. B.
-   `ALLOWED_ORIGINS=https://docker.example.com` und den Container neu starten;
-3. nur falls ein vorgeschalteter Auth-Proxy den Zugriff ohnehin absichert:
-   `CSRF_PROTECTION=0` setzen.
-
-## Grenzen
-
-- Nur einzelne Container, kein Docker Swarm/Stack-Update.
-- Compose-Dateien werden nicht bearbeitet; das Tool aktualisiert Images und
-  Container, nicht die `compose.yaml` des Hosts. Nach Update oder Tag-Wechsel
-  setzt ein späteres `docker compose up -d` das dort hinterlegte Image wieder
-  ein.
-- Der Docker-Daemon muss das Registry erreichen können; private Registries
-  benötigen Anmeldedaten im Docker-Daemon.
-- Die automatische Prüfung läuft nur, solange der Tool-Container läuft; sie
-  ersetzt keinen externen Cron. Benachrichtigungen gibt es nur per Webhook
-  (kein SMTP-Versand).
-- Beim Backup wird der Container gestoppt (kurze Ausfallzeit), damit die Daten
-  konsistent sind.
-- Ein mehrteiliger `ENTRYPOINT` lässt sich im generierten Shell-Skript nicht
-  als ein `--entrypoint`-Argument abbilden; das Skript enthält dann einen
-  Hinweis. Der Rollback über die Oberfläche ist davon nicht betroffen.
-
-## Projektstruktur
+## Project structure
 
 ```
 app/
-  main.py          FastAPI-Routen, Auth-Middleware, Templates
-  auth.py          Passwort-Login, Sessions, Rate-Limit
-  config.py        Einstellungen, Datenverzeichnisse, Legacy-Import
-  cron.py          Cron-Ausdrücke: prüfen und nächste Laufzeit berechnen
-  autocheck.py     Scheduler, leichte Prüfung, Webhook-Benachrichtigung
-  docker_ops.py    Docker-API: Liste, Pull, Tagging, Recreate
-  i18n.py          Deutsche und englische Texte, Sprachwahl
-  operations.py    Update-, Rollback- und Backup-Abläufe
-  jobs.py          Hintergrund-Jobs mit Live-Log
-  paths.py         Ordnerauswahl
+  main.py          FastAPI routes, auth middleware, templates
+  auth.py          password login, sessions, rate limit, origin check
+  config.py        settings, data directories, per-container options
+  cron.py          cron expressions: validation and next run
+  autocheck.py     scheduler, lightweight check, webhook notification
+  docker_ops.py    Docker API: list, pull, tagging, recreate, digest check
+  i18n.py          German and English texts, language selection
+  operations.py    update, snapshot, rollback and backup flows
+  jobs.py          background jobs with live log
+  paths.py         folder picker
   templates/       Jinja2 + HTMX
-  static/          CSS, JS, lokal eingebundenes htmx
-tests/             Pytest-Suite (ohne Docker-Daemon lauffähig)
-README.md          Deutsch; die Oberfläche selbst ist DE/EN
+  static/          CSS, JS, bundled HTMX
+tests/             pytest suite (runs without a Docker daemon)
+README.md
 Dockerfile         python:3.12-alpine, non-interactive Uvicorn
-docker-compose.yml Socket, Backups, Config, Beispiel-Mounts
+docker-compose.yml socket, backups, config, example mounts
 ```
 
-## Entwicklung und Tests
+## Development and tests
 
 ```bash
 python3 -m pip install --target .devdeps fastapi uvicorn jinja2 python-multipart docker httpx pytest
@@ -329,6 +274,6 @@ PYTHONPATH=.devdeps:. CONFIG_DIR=/tmp/dui-config WEB_PASSWORD=dev \
 PYTHONPATH=.devdeps:. python3 -m pytest -q tests
 ```
 
-Die Tests decken Login/Rechte, Seitenrendering, Einstellungen, Ordnerauswahl,
-Backup/Restore, Rollback-Skripte, Aufräumen, den Job-Ablauf sowie Cron-Parser,
-Digest-Prüfung und Scheduler ab. Sie benötigen keinen Docker-Daemon.
+The tests cover login and permissions, page rendering, settings, folder picker,
+backup and restore, rollback scripts, cleanup, the job flow, cron parsing, digest
+checks and the scheduler. They do not need a Docker daemon.
