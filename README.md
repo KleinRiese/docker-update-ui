@@ -146,12 +146,14 @@ Each container can be checked automatically:
 - **Check now** runs the lightweight check immediately, without waiting for the
   schedule.
 
-The check compares the registry manifest digest with the local image through the
-Docker daemon, so no layers are downloaded. For multi-architecture images the
-digest of the matching platform is used; when the local image has no repository
-digest (for example a locally built image) or the daemon cannot provide a
-comparable value, the interface falls back to the regular pull-based check.
-Private registries use the credentials the Docker daemon already has.
+The check compares the registry manifest digest with the digest of the image
+the container is **running** – not with the image the tag currently points to.
+A new image that was already pulled locally therefore still counts as an
+update. For multi-architecture images the digest of the matching platform is
+used; when the running image has no repository digest (for example a locally
+built image) or the daemon cannot provide a comparable value, the interface
+falls back to the regular pull-based check. Private registries use the
+credentials the Docker daemon already has.
 
 The scheduler runs as a thread inside the tool container: it looks every 30
 seconds for due entries, skips containers with a running job, the tool's own

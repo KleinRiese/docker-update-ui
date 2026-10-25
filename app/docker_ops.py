@@ -318,9 +318,11 @@ def quick_check(name: str, log=lambda message: None) -> dict:
     """Update-Status ohne Download der Layer ermitteln.
 
     Verglichen wird der Manifest-Digest der Registry mit den ``RepoDigests``
-    des lokalen Images. Ist das nicht möglich (kein RepoDigest, alte
-    Daemon-Version, private Registry ohne Zugangsdaten), greift die bisherige
-    Prüfung per Pull.
+    des Images, das der Container gerade ausführt – nicht mit dem Image, auf
+    das der Tag lokal zeigt. Nach einem Pull zeigt der Tag schon auf das neue
+    Image, während der Container noch mit dem alten läuft. Ist das nicht
+    möglich (kein RepoDigest, alte Daemon-Version, private Registry ohne
+    Zugangsdaten), greift die bisherige Prüfung per Pull.
     """
     client = get_client()
     container = client.containers.get(name)
@@ -339,7 +341,9 @@ def quick_check(name: str, log=lambda message: None) -> dict:
 
     image_attrs: dict = {}
     try:
-        image_attrs = client.images.get(ref).attrs or {}
+        image_attrs = client.images.get(
+            str(container.attrs.get("Image") or ref)
+        ).attrs or {}
     except ImageNotFound:
         image_attrs = {}
 

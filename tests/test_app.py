@@ -1251,10 +1251,22 @@ def test_auto_check_settings_roundtrip():
 
 
 def _fake_docker(monkeypatch, *, repo_digests, registry_digest, platforms=None,
-                 arch="amd64"):
+                 arch="amd64", container_repo_digests=None):
     image = types.SimpleNamespace(
         attrs={
             "RepoDigests": repo_digests,
+            "Architecture": arch,
+            "Os": "linux",
+        }
+    )
+    # Image, mit dem der Container läuft; ohne eigene Angabe dasselbe Image.
+    container_image = types.SimpleNamespace(
+        attrs={
+            "RepoDigests": (
+                repo_digests
+                if container_repo_digests is None
+                else container_repo_digests
+            ),
             "Architecture": arch,
             "Os": "linux",
         }
@@ -1271,9 +1283,15 @@ def _fake_docker(monkeypatch, *, repo_digests, registry_digest, platforms=None,
             "Image": "sha256:" + "b" * 64,
         }
     )
+
+    def get_image(ref):
+        # Die Container-Kennung liefert das laufende Image, ein Tag das lokal
+        # markierte Image.
+        return container_image if str(ref).startswith("sha256:") else image
+
     client = types.SimpleNamespace(
         images=types.SimpleNamespace(
-            get=lambda ref: image, get_registry_data=lambda ref: data
+            get=get_image, get_registry_data=lambda ref: data
         ),
         containers=types.SimpleNamespace(get=lambda name: container),
     )
@@ -1301,6 +1319,25 @@ def test_quick_check_reports_current_image(monkeypatch):
     result = docker_ops.quick_check("web")
     assert result["state"] == "current"
     assert result["updateable"] is False
+
+
+def test_quick_check_compares_running_image_not_tag(monkeypatch):
+    # Nach einem Pull zeigt der Tag auf das neue Image, der Container läuft
+    # aber noch mit dem alten. Die automatische Prüfung muss das Update
+    # melden, sonst widerspricht sie der manuellen Prüfung.
+    running_digest = "sha256:" + "a" * 64
+    registry_digest = "sha256:" + "c" * 64
+    _fake_docker(
+        monkeypatch,
+        repo_digests=[f"nginx@{registry_digest}"],
+        registry_digest=registry_digest,
+        container_repo_digests=[f"nginx@{running_digest}"],
+    )
+    result = docker_ops.quick_check("web")
+    assert result["state"] == "available"
+    assert result["updateable"] is True
+    assert result["method"] == "registry"
+    assert result["local"] == [running_digest]
 
 
 def test_quick_check_uses_platform_digest(monkeypatch):
