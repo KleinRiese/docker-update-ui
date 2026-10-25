@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Anmelden · Docker Update UI</title>
+  <title>{{ t('login.title') }} · {{ t('brand.name') }} {{ t('brand.sub') }}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -11,21 +11,29 @@
 <main class="login-card">
   <div class="brand brand-large">
     <span class="logo">⇪</span>
-    <span>Docker Update<span class="brand-sub">UI</span></span>
+    <span>{{ t('brand.name') }}<span class="brand-sub">{{ t('brand.sub') }}</span></span>
   </div>
-  <p class="muted">Container-Updates, Daten-Backups und Rollbacks für diesen Docker-Host.</p>
+  <p class="muted">{{ t('login.subtitle') }}</p>
 
   {% if error %}<div class="flash err" role="alert">{{ error }}</div>{% endif %}
 
   <form method="post" action="/login" class="form">
     <input type="hidden" name="next" value="{{ next }}">
     <label>
-      Passwort
+      {{ t('login.password') }}
       <input type="password" name="password" autocomplete="current-password" autofocus required>
     </label>
-    <button class="button primary wide" type="submit">Anmelden</button>
+    <button class="button primary wide" type="submit">{{ t('login.submit') }}</button>
   </form>
-  <p class="hint-text">Das Passwort wird über <code>WEB_PASSWORD</code> gesetzt.</p>
+  <p class="hint-text">{{ t('login.hint') }}</p>
+
+  <div class="lang-switch lang-switch-center" role="group" aria-label="{{ t('language.switch') }}">
+    {% for code in ('de', 'en') %}
+      <a href="/language/{{ code }}?next=/login"
+         class="{{ 'active' if lang == code else '' }}"
+         hreflang="{{ code }}" lang="{{ code }}">{{ code|upper }}</a>
+    {% endfor %}
+  </div>
 </main>
 </body>
 </html>

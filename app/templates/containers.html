@@ -1,52 +1,51 @@
 {% extends "base.html" %}
-{% block title %}Container{% endblock %}
+{% block title %}{{ t('containers.title') }}{% endblock %}
 
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>Container</h1>
-    <p class="muted">Updates prüfen, Daten sichern und Rollbacks verwalten.</p>
+    <h1>{{ t('containers.title') }}</h1>
+    <p class="muted">{{ t('containers.subtitle') }}</p>
   </div>
 </div>
 
 {% if docker_error %}
   <div class="notice err">
-    <strong>Docker nicht erreichbar.</strong><br>
+    <strong>{{ t('containers.docker_down') }}</strong><br>
     {{ docker_error }}
   </div>
 {% else %}
   <section class="stats">
     <div class="stat">
-      <span class="stat-label">Container</span>
+      <span class="stat-label">{{ t('containers.stat.containers') }}</span>
       <span class="stat-value">{{ rows|length }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Backup-Verzeichnis</span>
+      <span class="stat-label">{{ t('containers.stat.backup_dir') }}</span>
       <span class="stat-value mono small">{{ settings.backup_dir }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Watchtower-Image</span>
-      <span class="stat-value mono small">{{ settings.watchtower_image }}</span>
+      <span class="stat-label">{{ t('containers.stat.method') }}</span>
+      <span class="stat-value small">{{ t('containers.stat.method_value') }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Rollback-Punkte</span>
+      <span class="stat-label">{{ t('containers.stat.rollbacks') }}</span>
       <span class="stat-value">{{ settings.max_rollbacks }}</span>
     </div>
   </section>
 
   {% if not backup_persistent %}
     <div class="notice warn">
-      Das Backup-Verzeichnis <span class="mono">{{ settings.backup_dir }}</span> liegt nicht auf einem eingebundenen Volume.
-      Backups überleben damit kein Neuerstellen des Tool-Containers – bitte als Volume einbinden.
+      {{ t('containers.backup_not_persistent', path=settings.backup_dir) }}
     </div>
   {% endif %}
 
   <section class="panel">
     <div class="panel-head">
-      <h2>Alle Container</h2>
+      <h2>{{ t('containers.all') }}</h2>
       <button class="button ghost" type="button"
               hx-get="/partials/containers" hx-target="#container-list"
-              hx-swap="innerHTML">Aktualisieren</button>
+              hx-swap="innerHTML">{{ t('containers.refresh') }}</button>
     </div>
     <div id="container-list">
       {% include "_container_table.html" %}
@@ -55,13 +54,13 @@
 {% endif %}
 
 <section class="panel hint">
-  <h2>Ablauf eines Updates</h2>
+  <h2>{{ t('containers.flow.title') }}</h2>
   <ol class="steps">
-    <li>Container öffnen und <strong>Update prüfen</strong> – das Image wird gepullt und mit dem laufenden Image verglichen.</li>
-    <li>Datenverzeichnis kontrollieren, dann Update bestätigen.</li>
-    <li>Das Tool taggt das laufende Image als Rollback-Punkt, stoppt den Container, archiviert die Daten und erzeugt ein Rollback-Skript.</li>
-    <li>Update per Watchtower (bzw. bei Rollback-Images durch Neuerstellen mit dem regulären Tag) und Start des Containers.</li>
-    <li>Bei Bedarf in der Container-Ansicht auf einen früheren Stand zurückrollen.</li>
+    <li>{{ t('containers.flow.1')|safe }}</li>
+    <li>{{ t('containers.flow.2') }}</li>
+    <li>{{ t('containers.flow.3') }}</li>
+    <li>{{ t('containers.flow.4') }}</li>
+    <li>{{ t('containers.flow.5') }}</li>
   </ol>
 </section>
 {% endblock %}

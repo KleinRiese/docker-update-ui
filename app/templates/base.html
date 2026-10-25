@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Docker Update{% endblock %} · Docker Update UI</title>
+  <title>{% block title %}{{ t('brand.name') }}{% endblock %} · {{ t('brand.name') }} {{ t('brand.sub') }}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
@@ -13,14 +13,21 @@
 <header class="topbar">
   <a class="brand" href="/">
     <span class="logo">⇪</span>
-    <span>Docker Update<span class="brand-sub">UI</span></span>
+    <span>{{ t('brand.name') }}<span class="brand-sub">{{ t('brand.sub') }}</span></span>
   </a>
   <nav class="nav">
-    <a href="/" class="{{ 'active' if active == 'containers' else '' }}">Container</a>
-    <a href="/settings" class="{{ 'active' if active == 'settings' else '' }}">Einstellungen</a>
+    <a href="/" class="{{ 'active' if active == 'containers' else '' }}">{{ t('nav.containers') }}</a>
+    <a href="/settings" class="{{ 'active' if active == 'settings' else '' }}">{{ t('nav.settings') }}</a>
   </nav>
+  <div class="lang-switch" role="group" aria-label="{{ t('language.switch') }}">
+    {% for code in ('de', 'en') %}
+      <a href="/language/{{ code }}?next={{ request.url.path|urlencode }}"
+         class="{{ 'active' if lang == code else '' }}"
+         hreflang="{{ code }}" lang="{{ code }}">{{ code|upper }}</a>
+    {% endfor %}
+  </div>
   <form method="post" action="/logout" class="logout">
-    <button class="link" type="submit">Abmelden</button>
+    <button class="link" type="submit">{{ t('nav.logout') }}</button>
   </form>
 </header>
 <main class="container">
@@ -29,7 +36,7 @@
   {% block content %}{% endblock %}
 </main>
 <footer class="footer">
-  <span>Docker Update UI · Alpine-Container mit Zugriff auf <code>/var/run/docker.sock</code></span>
+  <span>{{ t('footer.text') }} <code>/var/run/docker.sock</code></span>
 </footer>
 </body>
 </html>

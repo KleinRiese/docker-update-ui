@@ -489,3 +489,49 @@ input:focus, select:focus {
   .page-head { flex-direction: column; }
   .table th:nth-child(5), .table td:nth-child(5) { display: none; }
 }
+
+/* ---------- Sprachumschalter ---------- */
+
+.lang-switch {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.lang-switch a {
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.lang-switch a:hover { color: var(--text); background: #172030; text-decoration: none; }
+.lang-switch a.active { color: var(--text); background: #1b2534; }
+.lang-switch + .logout { margin-left: 12px; }
+.lang-switch-center { margin: 18px auto 0; width: fit-content; }
+
+/* Checkbox im Formular (Datenbackup) */
+.form label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+.form label.check input { width: auto; accent-color: var(--accent); }
+
+/* Tag-Wechsel im Update-Panel */
+.tag-form {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tag-form .row { margin-top: 0; }
+.tag-form input { font-family: var(--mono); font-size: 12.5px; }

@@ -1,4 +1,3 @@
-{% set labels = {'running': 'läuft', 'success': 'abgeschlossen', 'error': 'Fehler'} %}
 {% set pill = {'running': 'update', 'success': 'ok', 'error': 'err'} %}
 <div class="job" id="job-{{ job.id }}"
      {% if job.status == 'running' %}
@@ -6,19 +5,19 @@
      {% endif %}>
   <div class="job-head">
     <span class="strong">{{ job.title }}</span>
-    <span class="pill {{ pill[job.status] }}">{{ labels[job.status] }}</span>
+    <span class="pill {{ pill[job.status] }}">{{ t('job.status.' ~ job.status) }}</span>
   </div>
 
   <pre class="log" data-log>{{ job.lines | join('\n') }}</pre>
 
   {% if job.result %}
     <dl class="facts compact">
-      {% if job.result.status %}<div><dt>Aktion</dt><dd>{{ job.result.status }}</dd></div>{% endif %}
-      {% if job.result.image %}<div><dt>Image</dt><dd class="mono small">{{ job.result.image }}</dd></div>{% endif %}
-      {% if job.result.rollback_image %}<div><dt>Rollback-Image</dt><dd class="mono small">{{ job.result.rollback_image }}</dd></div>{% endif %}
-      {% if job.result.backup_file %}<div><dt>Backup</dt><dd class="mono small">{{ job.result.backup_file }}</dd></div>{% endif %}
-      {% if job.result.rollback_script %}<div><dt>Rollback-Skript</dt><dd class="mono small">{{ job.result.rollback_script }}</dd></div>{% endif %}
-      {% if job.result.data_dir %}<div><dt>Datenverzeichnis</dt><dd class="mono small">{{ job.result.data_dir }}</dd></div>{% endif %}
+      {% if job.result.status %}<div><dt>{{ t('job.action') }}</dt><dd>{{ job.result.status }}</dd></div>{% endif %}
+      {% if job.result.image %}<div><dt>{{ t('job.image') }}</dt><dd class="mono small">{{ job.result.image }}</dd></div>{% endif %}
+      {% if job.result.rollback_image %}<div><dt>{{ t('job.rollback_image') }}</dt><dd class="mono small">{{ job.result.rollback_image }}</dd></div>{% endif %}
+      {% if job.result.backup_file %}<div><dt>{{ t('job.backup') }}</dt><dd class="mono small">{{ job.result.backup_file }}</dd></div>{% endif %}
+      {% if job.result.rollback_script %}<div><dt>{{ t('job.script') }}</dt><dd class="mono small">{{ job.result.rollback_script }}</dd></div>{% endif %}
+      {% if job.result.data_dir %}<div><dt>{{ t('job.data_dir') }}</dt><dd class="mono small">{{ job.result.data_dir }}</dd></div>{% endif %}
     </dl>
   {% endif %}
 
@@ -36,7 +35,7 @@
            hx-trigger="load delay:300ms"></div>
     {% endif %}
     <div class="row">
-      <a class="button ghost small" href="/containers/{{ job.meta.container|urlencode }}">Zur Container-Ansicht</a>
+      <a class="button ghost small" href="/containers/{{ job.meta.container|urlencode }}">{{ t('job.to_container') }}</a>
     </div>
   {% endif %}
 </div>

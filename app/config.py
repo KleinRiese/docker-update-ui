@@ -9,6 +9,8 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from . import i18n
+
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 DATA_DIRS_FILE = CONFIG_DIR / "data_dirs.json"
@@ -27,10 +29,13 @@ def _env_int(name: str, default: int) -> int:
 
 DEFAULT_BACKUP_DIR = os.environ.get("BACKUP_DIR") or "/docker/backups"
 DEFAULT_BROWSE_DIR = os.environ.get("BROWSE_DIR") or "/docker"
-DEFAULT_WATCHTOWER_IMAGE = (
-    os.environ.get("WATCHTOWER_IMAGE") or "nickfedor/watchtower"
-)
 DEFAULT_MAX_ROLLBACKS = _env_int("MAX_ROLLBACKS", 3)
+DEFAULT_NOTIFY_URL = os.environ.get("NOTIFY_URL", "")
+CONTAINER_OPTIONS_FILE = CONFIG_DIR / "container_options.json"
+
+# Modi der automatischen Update-Prüfung
+AUTO_CHECK_MODES = ("check", "notify", "update")
+DEFAULT_AUTO_CHECK_CRON = os.environ.get("AUTO_CHECK_CRON", "0 4 * * *")
 
 _lock = threading.RLock()
 
@@ -39,66 +44,82 @@ _lock = threading.RLock()
 class Settings:
     backup_dir: str = DEFAULT_BACKUP_DIR
     browse_dir: str = DEFAULT_BROWSE_DIR
-    watchtower_image: str = DEFAULT_WATCHTOWER_IMAGE
     max_rollbacks: int = DEFAULT_MAX_ROLLBACKS
+    notify_url: str = DEFAULT_NOTIFY_URL
 
 
 def normalize_dir(path: str) -> str:
     """Absoluten Pfad normalisieren, ohne Symlinks aufzulösen."""
     raw = (path or "").strip()
     if not raw:
-        raise ValueError("Bitte einen Pfad angeben.")
+        raise ValueError(i18n.t("err.path_required"))
     if not raw.startswith("/"):
-        raise ValueError(
-            f"'{raw}' ist kein absoluter Pfad. Bitte mit / beginnen "
-            "(Pfade im Container = Pfade auf dem Host)."
-        )
+        raise ValueError(i18n.t("err.path_absolute", path=raw))
     normalized = os.path.normpath(raw)
     if normalized == "//":
         normalized = "/"
     return normalized
 
 
-def require_dir(path: str, label: str = "Verzeichnis") -> str:
+def require_dir(path: str, label: str = "label.data_dir") -> str:
     """Pfad validieren und sicherstellen, dass er im Container sichtbar ist."""
     normalized = normalize_dir(path)
     if not os.path.isdir(normalized):
         raise ValueError(
-            f"{label} '{normalized}' ist im Container nicht vorhanden. "
-            "Bitte den Ordner 1:1 als Volume einbinden "
-            f"(- {normalized}:{normalized})."
+            i18n.t(
+                "err.dir_missing",
+                label=i18n.t(label),
+                path=normalized,
+            )
         )
     return normalized
 
 
-def ensure_writable_dir(path: str, label: str = "Verzeichnis") -> str:
+def ensure_writable_dir(path: str, label: str = "label.data_dir") -> str:
     normalized = normalize_dir(path)
     try:
         Path(normalized).mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise ValueError(
-            f"{label} '{normalized}' kann nicht angelegt werden: {exc}"
+            i18n.t(
+                "err.dir_create",
+                label=i18n.t(label),
+                path=normalized,
+                error=exc,
+            )
         ) from exc
     if not os.path.isdir(normalized):
-        raise ValueError(f"{label} '{normalized}' ist kein Verzeichnis.")
+        raise ValueError(
+            i18n.t("err.not_a_dir", label=i18n.t(label), path=normalized)
+        )
     if not os.access(normalized, os.W_OK):
-        raise ValueError(f"{label} '{normalized}' ist nicht beschreibbar.")
+        raise ValueError(
+            i18n.t("err.dir_not_writable", label=i18n.t(label), path=normalized)
+        )
     return normalized
 
 
+def validate_url(url: str) -> str:
+    """Webhook-URL prüfen: leer oder http(s)."""
+    value = (url or "").strip()
+    if not value:
+        return ""
+    if not value.startswith(("http://", "https://")) or " " in value:
+        raise ValueError(i18n.t("err.notify_url"))
+    return value
+
+
 def _validate(settings: Settings) -> Settings:
-    backup_dir = ensure_writable_dir(settings.backup_dir, "Backup-Verzeichnis")
-    browse_dir = require_dir(settings.browse_dir, "Startverzeichnis")
-    image = (settings.watchtower_image or "").strip()
-    if not image or " " in image:
-        raise ValueError("Bitte ein gültiges Watchtower-Image angeben.")
+    backup_dir = ensure_writable_dir(settings.backup_dir, "label.backup_dir")
+    browse_dir = require_dir(settings.browse_dir, "label.browse_dir")
     try:
         max_rollbacks = int(settings.max_rollbacks)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Max. Rollbacks muss eine ganze Zahl sein.") from exc
+        raise ValueError(i18n.t("err.max_rollbacks_int")) from exc
     if max_rollbacks < 1:
-        raise ValueError("Max. Rollbacks muss mindestens 1 sein.")
-    return Settings(backup_dir, browse_dir, image, max_rollbacks)
+        raise ValueError(i18n.t("err.max_rollbacks_min"))
+    notify_url = validate_url(getattr(settings, "notify_url", ""))
+    return Settings(backup_dir, browse_dir, max_rollbacks, notify_url)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -122,10 +143,8 @@ def load_settings() -> Settings:
     merged = {
         "backup_dir": stored.get("backup_dir", DEFAULT_BACKUP_DIR),
         "browse_dir": stored.get("browse_dir", DEFAULT_BROWSE_DIR),
-        "watchtower_image": stored.get(
-            "watchtower_image", DEFAULT_WATCHTOWER_IMAGE
-        ),
         "max_rollbacks": stored.get("max_rollbacks", DEFAULT_MAX_ROLLBACKS),
+        "notify_url": stored.get("notify_url", DEFAULT_NOTIFY_URL),
     }
     try:
         return _validate(Settings(**merged))
@@ -211,7 +230,7 @@ def get_data_dir(container: str) -> str | None:
 
 
 def set_data_dir(container: str, path: str) -> str:
-    normalized = require_dir(path, "Datenverzeichnis")
+    normalized = require_dir(path, "label.data_dir")
     with _lock:
         mapping = load_data_dirs()
         mapping[container] = normalized
@@ -227,6 +246,93 @@ def remove_data_dir(container: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Optionen pro Container
+# ---------------------------------------------------------------------------
+
+
+def load_container_options() -> dict[str, dict]:
+    with _lock:
+        raw = _read_json(CONTAINER_OPTIONS_FILE)
+    return {
+        str(name): value
+        for name, value in raw.items()
+        if isinstance(name, str) and isinstance(value, dict)
+    }
+
+
+def get_backup_data(container: str) -> bool:
+    """Sollen die Daten dieses Containers mitgesichert werden?"""
+    options = load_container_options().get(container) or {}
+    return options.get("backup_data", True) is not False
+
+
+def set_backup_data(container: str, enabled: bool) -> None:
+    with _lock:
+        options = load_container_options()
+        entry = options.setdefault(container, {})
+        entry["backup_data"] = bool(enabled)
+        _write_json(CONTAINER_OPTIONS_FILE, options)
+
+
+# ---------------------------------------------------------------------------
+# Automatische Update-Prüfung (Zeitplan und letztes Ergebnis)
+# ---------------------------------------------------------------------------
+
+
+def get_auto_check(container: str) -> dict:
+    options = load_container_options().get(container) or {}
+    entry = options.get("auto_check")
+    entry = entry if isinstance(entry, dict) else {}
+    mode = str(entry.get("mode") or "check")
+    last = entry.get("last")
+    return {
+        "enabled": bool(entry.get("enabled")),
+        "mode": mode if mode in AUTO_CHECK_MODES else "check",
+        "cron": str(entry.get("cron") or DEFAULT_AUTO_CHECK_CRON),
+        "last": last if isinstance(last, dict) else None,
+    }
+
+
+def set_auto_check(
+    container: str,
+    *,
+    enabled: bool,
+    mode: str,
+    cron: str,
+) -> dict:
+    """Zeitplan speichern; wirft ``ValueError`` bei ungültiger Eingabe."""
+    from . import cron as cronlib
+
+    expression = cronlib.validate(cron)
+    if mode not in AUTO_CHECK_MODES:
+        raise ValueError(i18n.t("err.auto_mode"))
+    with _lock:
+        options = load_container_options()
+        entry = options.setdefault(container, {})
+        auto = entry.get("auto_check")
+        auto = dict(auto) if isinstance(auto, dict) else {}
+        auto.update({"enabled": bool(enabled), "mode": mode, "cron": expression})
+        entry["auto_check"] = auto
+        _write_json(CONTAINER_OPTIONS_FILE, options)
+    return get_auto_check(container)
+
+
+def record_auto_check(container: str, last: dict | None) -> None:
+    """Ergebnis des letzten automatischen Laufs ablegen."""
+    with _lock:
+        options = load_container_options()
+        entry = options.setdefault(container, {})
+        auto = entry.get("auto_check")
+        auto = dict(auto) if isinstance(auto, dict) else {}
+        if last is None:
+            auto.pop("last", None)
+        else:
+            auto["last"] = last
+        entry["auto_check"] = auto
+        _write_json(CONTAINER_OPTIONS_FILE, options)
+
+
+# ---------------------------------------------------------------------------
 # Import der Konfiguration des bisherigen Shell-Skripts
 # ---------------------------------------------------------------------------
 
@@ -235,7 +341,6 @@ def _parse_legacy_settings(text: str) -> dict:
     keys = {
         "BACKUP_BASE_DIR": "backup_dir",
         "BROWSE_DIR": "browse_dir",
-        "WATCHTOWER_IMAGE": "watchtower_image",
         "MAX_ROLLBACKS": "max_rollbacks",
     }
     values: dict = {}
@@ -261,9 +366,6 @@ def import_legacy_config(log=print) -> None:
                 merged = Settings(
                     backup_dir=data.get("backup_dir", current.backup_dir),
                     browse_dir=data.get("browse_dir", current.browse_dir),
-                    watchtower_image=data.get(
-                        "watchtower_image", current.watchtower_image
-                    ),
                     max_rollbacks=int(
                         data.get("max_rollbacks", current.max_rollbacks)
                     ),

@@ -5,11 +5,11 @@
 <div class="page-head">
   <div>
     <h1>{{ title }}</h1>
-    <p class="muted">Die Anfrage konnte nicht abgeschlossen werden.</p>
+    <p class="muted">{{ t('error.request_failed') }}</p>
   </div>
 </div>
 <div class="notice err">{{ message }}</div>
 <div class="row">
-  <a class="button ghost" href="/">Zur Übersicht</a>
+  <a class="button ghost" href="/">{{ t('error.back') }}</a>
 </div>
 {% endblock %}

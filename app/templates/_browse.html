@@ -4,13 +4,13 @@
     {% if parent %}
       <button class="button ghost small" type="button"
               hx-get="/browse?path={{ parent|urlencode }}{% if show_hidden %}&amp;hidden=1{% endif %}"
-              hx-target="#dir-picker-body" hx-swap="innerHTML">↑ Übergeordneter Ordner</button>
+              hx-target="#dir-picker-body" hx-swap="innerHTML">{{ t('browse.up') }}</button>
     {% endif %}
     <label class="check small">
       <input type="checkbox" {% if show_hidden %}checked{% endif %}
              hx-get="/browse?path={{ path|urlencode }}{% if not show_hidden %}&amp;hidden=1{% endif %}"
              hx-target="#dir-picker-body" hx-swap="innerHTML">
-      Versteckte Ordner
+      {{ t('browse.hidden') }}
     </label>
   </div>
 
@@ -22,15 +22,15 @@
                 hx-target="#dir-picker-body" hx-swap="innerHTML">
           📁 {{ entry.name }}
         </button>
-        <button class="button ghost small" type="button" data-pick-dir="{{ entry.path }}">Auswählen</button>
+        <button class="button ghost small" type="button" data-pick-dir="{{ entry.path }}">{{ t('browse.select') }}</button>
       </li>
     {% else %}
-      <li class="muted small">Keine Unterordner.</li>
+      <li class="muted small">{{ t('browse.empty') }}</li>
     {% endfor %}
   </ul>
 
   <div class="row">
-    <input id="browse-manual" placeholder="/vollständiger/pfad" value="{{ path }}" spellcheck="false" autocomplete="off">
-    <button class="button ghost small" type="button" data-pick-dir="" data-pick-from="#browse-manual">Diesen Pfad übernehmen</button>
+    <input id="browse-manual" placeholder="{{ t('browse.placeholder') }}" value="{{ path }}" spellcheck="false" autocomplete="off">
+    <button class="button ghost small" type="button" data-pick-dir="" data-pick-from="#browse-manual">{{ t('browse.take') }}</button>
   </div>
 </div>

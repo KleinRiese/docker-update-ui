@@ -1,25 +1,25 @@
 <section class="panel">
   <div class="panel-head">
-    <h2>Status</h2>
+    <h2>{{ t('table.status') }}</h2>
     <span class="pill {{ detail.hint_class }}">{{ detail.hint }}</span>
   </div>
   <dl class="facts">
-    <div><dt>Image</dt><dd class="mono">{{ detail.image }}</dd></div>
-    <div><dt>Image-ID</dt><dd class="mono">{{ detail.image_id }}</dd></div>
+    <div><dt>{{ t('table.image') }}</dt><dd class="mono">{{ detail.image }}</dd></div>
+    <div><dt>{{ t('detail.image_id') }}</dt><dd class="mono">{{ detail.image_id }}</dd></div>
     <div>
-      <dt>Zustand</dt>
+      <dt>{{ t('detail.state') }}</dt>
       <dd><span class="state state-{{ detail.status }}"></span> {{ detail.status_text }}
         <span class="muted">({{ detail.status|statuslabel }})</span></dd>
     </div>
-    <div><dt>Container-ID</dt><dd class="mono">{{ detail.short_id }}</dd></div>
-    <div><dt>Neustart-Richtlinie</dt><dd>{{ detail.restart_policy or '–' }}</dd></div>
-    <div><dt>Netzwerke</dt><dd class="mono small">{{ detail.networks|join(', ') or '–' }}</dd></div>
+    <div><dt>{{ t('detail.container_id') }}</dt><dd class="mono">{{ detail.short_id }}</dd></div>
+    <div><dt>{{ t('detail.restart') }}</dt><dd>{{ detail.restart_policy or '–' }}</dd></div>
+    <div><dt>{{ t('detail.networks') }}</dt><dd class="mono small">{{ detail.networks|join(', ') or '–' }}</dd></div>
     {% if detail.ports %}
-      <div class="wide"><dt>Ports</dt><dd class="mono small">{{ detail.ports|join(' · ') }}</dd></div>
+      <div class="wide"><dt>{{ t('detail.ports') }}</dt><dd class="mono small">{{ detail.ports|join(' · ') }}</dd></div>
     {% endif %}
     {% if detail.mounts %}
       <div class="wide">
-        <dt>Mounts</dt>
+        <dt>{{ t('detail.mounts') }}</dt>
         <dd class="mono small">
           {% for mount in detail.mounts %}
             <span class="nowrap">{{ mount.source }} → {{ mount.destination }}{% if not mount.rw %} (ro){% endif %}</span>{% if not loop.last %}<br>{% endif %}

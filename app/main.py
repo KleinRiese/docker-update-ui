@@ -18,8 +18,9 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import pass_context
 
-from . import auth, config, docker_ops, operations, paths
+from . import auth, autocheck, config, docker_ops, i18n, operations, paths
 from .jobs import jobs
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,29 +31,41 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["filesize"] = operations.format_size
 
 
-def _format_datetime(value) -> str:
+@pass_context
+def _template_t(context, key: str, **values) -> str:
+    """Übersetzung mit der Sprache des Requests (nicht des Render-Zeitpunkts)."""
+    return i18n.t(key, lang=context.get("lang"), **values)
+
+
+templates.env.globals["t"] = _template_t
+
+
+@pass_context
+def _format_datetime(context, value) -> str:
+    pattern = i18n.date_format(context.get("lang"))
     if value in (None, "", 0):
         return "–"
     if isinstance(value, datetime):
-        return value.strftime("%d.%m.%Y %H:%M")
+        return value.strftime(pattern)
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value).strftime("%d.%m.%Y %H:%M")
+        return datetime.fromtimestamp(value).strftime(pattern)
     text = str(value)
-    match = re.match(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})", text)
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})", text)
     if match:
-        return f"{match.group(1).split('-')[2]}.{match.group(1).split('-')[1]}.{match.group(1).split('-')[0]} {match.group(2)}"
+        parsed = datetime(*(int(part) for part in match.groups()))
+        return parsed.strftime(pattern)
     return text
 
 
 templates.env.filters["dt"] = _format_datetime
-templates.env.filters["statuslabel"] = lambda value: {
-    "running": "läuft",
-    "exited": "gestoppt",
-    "created": "erstellt",
-    "paused": "pausiert",
-    "restarting": "startet neu",
-    "dead": "defekt",
-}.get(str(value), str(value))
+@pass_context
+def _status_label(context, value) -> str:
+    key = f"status.{value}"
+    label = i18n.t(key, lang=context.get("lang"))
+    return str(value) if label == key else label
+
+
+templates.env.filters["statuslabel"] = _status_label
 
 
 def render(
@@ -63,6 +76,7 @@ def render(
     **context,
 ):
     context.setdefault("request", request)
+    context.setdefault("lang", i18n.get_language())
     return templates.TemplateResponse(
         request=request,
         name=template,
@@ -86,13 +100,14 @@ def redirect_to(url: str, msg: str | None = None, err: str | None = None):
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if not auth.password_configured():
-        raise RuntimeError(
-            "WEB_PASSWORD ist nicht gesetzt. Bitte die Umgebungsvariable "
-            "WEB_PASSWORD setzen – ohne Passwort startet die Oberfläche nicht."
-        )
+        raise RuntimeError(i18n.t("error.no_password"))
     config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config.import_legacy_config(log=lambda message: print(f"[config] {message}"))
-    yield
+    autocheck.scheduler.start()
+    try:
+        yield
+    finally:
+        autocheck.scheduler.stop()
 
 
 app = FastAPI(
@@ -120,24 +135,20 @@ async def security_middleware(request: Request, call_next):
                 f"Origin={info['origin']!r} Host={info['host']!r} "
                 f"X-Forwarded-Host={info['forwarded_host']!r}"
             )
-            message = (
-                "Die Herkunft der Anfrage passt nicht zum aufgerufenen Host. "
-                f"Origin: {info['origin'] or '–'} · Host: {info['host'] or '–'}"
-                + (
+            message = i18n.t(
+                "error.csrf.body",
+                origin=info["origin"] or "–",
+                host=info["host"] or "–",
+                forwarded=(
                     f" · X-Forwarded-Host: {info['forwarded_host']}"
                     if info["forwarded_host"]
                     else ""
-                )
-                + ". Läuft die Oberfläche hinter einem Reverse Proxy, trage die "
-                "öffentliche Adresse in ALLOWED_ORIGINS ein (z. B. "
-                "https://docker.example.com) und starte den Container neu. "
-                "Alternativ lässt sich die Prüfung mit CSRF_PROTECTION=0 "
-                "abschalten – dann muss der Zugriff anderweitig abgesichert sein."
+                ),
             )
             return render(
                 "error.html",
                 request,
-                title="Anfrage abgelehnt (CSRF-Schutz)",
+                title=i18n.t("error.csrf.title"),
                 message=message,
                 status_code=403,
             )
@@ -156,19 +167,50 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
-PUBLIC_PATHS = {"/login", "/healthz"}
+PUBLIC_PATHS = {"/login", "/healthz", "/language"}
 
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path in PUBLIC_PATHS or path.startswith("/static"):
+    if path in PUBLIC_PATHS or path.startswith(("/static", "/language/")):
         return await call_next(request)
     if not auth.is_authenticated(request):
         if request.headers.get("hx-request") == "true":
             return Response(status_code=401, headers={"HX-Redirect": "/login"})
         return redirect_to("/login")
     return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Sprache (Cookie, sonst Accept-Language)
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def language_middleware(request: Request, call_next):
+    token = i18n.set_language(i18n.detect(request))
+    try:
+        return await call_next(request)
+    finally:
+        i18n.reset_language(token)
+
+
+@app.get("/language/{code}")
+def switch_language(code: str, next: str = "/"):
+    language = i18n.normalize(code)
+    if not language:
+        return redirect_to("/")
+    destination = next if next.startswith("/") and not next.startswith("//") else "/"
+    response = RedirectResponse(destination, status_code=303)
+    response.set_cookie(
+        i18n.LANGUAGE_COOKIE,
+        language,
+        max_age=i18n.LANGUAGE_COOKIE_MAX_AGE,
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +235,7 @@ def login_submit(
         return render(
             "login.html",
             request,
-            error="Zu viele Fehlversuche. Bitte ein paar Minuten warten.",
+            error=i18n.t("login.rate_limited"),
             next=next,
             status_code=429,
         )
@@ -202,7 +244,7 @@ def login_submit(
         return render(
             "login.html",
             request,
-            error="Falsches Passwort.",
+            error=i18n.t("login.wrong"),
             next=next,
             status_code=401,
         )
@@ -229,8 +271,20 @@ def logout(request: Request):
 def _rows_with_data_dirs() -> list[dict]:
     rows = docker_ops.list_containers()
     mapping = config.load_data_dirs()
+    options = config.load_container_options()
     for row in rows:
-        row["data_dir"] = mapping.get(row["name"])
+        entry = options.get(row["name"]) or {}
+        row["backup_data"] = entry.get("backup_data", True) is not False
+        # Ohne Datenbackup gibt es kein relevantes Verzeichnis – die Tabelle
+        # zeigt dafür "N/A" statt des nur noch gespeicherten Pfads.
+        row["data_dir"] = mapping.get(row["name"]) if row["backup_data"] else None
+        auto = entry.get("auto_check")
+        last = auto.get("last") if isinstance(auto, dict) else None
+        check = None
+        if isinstance(last, dict) and last.get("state"):
+            label, css = autocheck.state_label(last["state"])
+            check = {"label": label, "class": css, "at": last.get("at")}
+        row["check"] = check
     return rows
 
 
@@ -286,7 +340,7 @@ def _not_found(request: Request, message: str):
         "error.html",
         request,
         active="containers",
-        title="Nicht gefunden",
+        title=i18n.t("error.not_found"),
         message=message,
         status_code=404,
     )
@@ -303,26 +357,51 @@ def container_page(
     try:
         detail = docker_ops.container_detail(name)
     except docker.errors.NotFound:
-        return _not_found(request, f"Container '{name}' existiert nicht.")
+        return _not_found(
+            request, i18n.t("error.container_missing", name=name)
+        )
     except Exception as exc:  # noqa: BLE001
         return render(
             "error.html",
             request,
             active="containers",
-            title="Docker-Fehler",
+            title=i18n.t("error.docker"),
             message=str(exc),
             status_code=500,
         )
     data = operations.list_backups(name, settings)
+    data_dir = config.get_data_dir(name)
+    auto = config.get_auto_check(name)
+    auto_last = auto.get("last") or {}
+    auto_label, auto_class = autocheck.state_label(auto_last.get("state"))
+    if auto["enabled"]:
+        auto["next_at"] = autocheck.next_run_at(auto)
+    local_digests = auto_last.get("local") or []
+    auto_digests = {
+        "remote": str(auto_last.get("remote") or "").replace("sha256:", "")[:12],
+        "local": (
+            str(local_digests[-1]).replace("sha256:", "")[:12]
+            if local_digests
+            else ""
+        ),
+    }
     return render(
         "container_detail.html",
         request,
         active="containers",
         detail=detail,
+        auto=auto,
+        auto_last=auto_last,
+        auto_label=auto_label,
+        auto_class=auto_class,
+        auto_digests=auto_digests,
+        auto_skip=autocheck.skip_reason(detail),
+        default_cron=config.DEFAULT_AUTO_CHECK_CRON,
         settings=settings,
-        data_dir=config.get_data_dir(name),
-        data_persistent=config.path_is_persistent(config.get_data_dir(name) or ""),
+        data_dir=data_dir,
+        data_persistent=config.path_is_persistent(data_dir or ""),
         backup_persistent=config.path_is_persistent(settings.backup_dir),
+        backup_data=config.get_backup_data(name),
         container=name,
         data=data,
         max_rollbacks=settings.max_rollbacks,
@@ -337,7 +416,7 @@ def summary_partial(request: Request, name: str):
         detail = docker_ops.container_detail(name)
     except docker.errors.NotFound:
         return HTMLResponse(
-            '<div class="notice err">Container existiert nicht mehr.</div>'
+            f'<div class="notice err">{i18n.t("error.container_gone")}</div>'
         )
     except Exception as exc:  # noqa: BLE001
         return HTMLResponse(f'<div class="notice err">{exc}</div>')
@@ -364,6 +443,7 @@ def container_check(request: Request, name: str):
         container=name,
         plan=plan,
         data_dir=config.get_data_dir(name),
+        backup_data=config.get_backup_data(name),
         max_rollbacks=settings.max_rollbacks,
         backup_persistent=config.path_is_persistent(settings.backup_dir),
     )
@@ -373,7 +453,7 @@ def container_check(request: Request, name: str):
 def container_update(request: Request, name: str):
     settings = config.load_settings()
     job = jobs.start(
-        f"Update: {name}",
+        f"{i18n.t('msg.job_prefix')}: {name}",
         lambda current: operations.execute_update(name, settings, current.log),
         meta={"container": name, "kind": "update"},
     )
@@ -384,11 +464,58 @@ def container_update(request: Request, name: str):
 def container_snapshot(request: Request, name: str):
     settings = config.load_settings()
     job = jobs.start(
-        f"Snapshot: {name}",
+        f"{i18n.t('msg.job_snapshot')}: {name}",
         lambda current: operations.execute_snapshot(name, settings, current.log),
         meta={"container": name, "kind": "snapshot"},
     )
     return render("_job.html", request, job=job)
+
+
+@app.post("/containers/{name}/tag", response_class=HTMLResponse)
+def container_switch_tag(request: Request, name: str, tag: str = Form("")):
+    settings = config.load_settings()
+    job = jobs.start(
+        f"{i18n.t('msg.job_tag')}: {name}",
+        lambda current: operations.execute_switch_tag(
+            name, tag, settings, current.log
+        ),
+        meta={"container": name, "kind": "tag"},
+    )
+    return render("_job.html", request, job=job)
+
+
+@app.post("/containers/{name}/auto-check")
+def save_auto_check(
+    request: Request,
+    name: str,
+    enabled: str | None = Form(None),
+    cron: str = Form(""),
+    mode: str = Form("check"),
+):
+    try:
+        config.set_auto_check(
+            name, enabled=bool(enabled), mode=mode, cron=cron
+        )
+    except ValueError as exc:
+        return redirect_to(f"/containers/{name}", err=str(exc))
+    return redirect_to(f"/containers/{name}", msg=i18n.t("msg.auto_saved"))
+
+
+@app.post("/containers/{name}/auto-check/run")
+def run_auto_check(request: Request, name: str):
+    try:
+        result = autocheck.run_now(name)
+    except Exception as exc:  # noqa: BLE001 - Meldung in der Oberfläche
+        return redirect_to(f"/containers/{name}", err=str(exc))
+    if result.get("state") == "error":
+        return redirect_to(
+            f"/containers/{name}",
+            err=result.get("error") or i18n.t("auto.state.error"),
+        )
+    label, _ = autocheck.state_label(result.get("state"))
+    return redirect_to(
+        f"/containers/{name}", msg=i18n.t("msg.auto_checked", status=label)
+    )
 
 
 @app.post("/containers/{name}/rollback", response_class=HTMLResponse)
@@ -401,11 +528,15 @@ def container_rollback(
     try:
         plan = operations.rollback_plan(name, timestamp, settings)
     except Exception as exc:  # noqa: BLE001
-        job = jobs.failed(f"Rollback: {name}", str(exc), meta={"container": name})
+        job = jobs.failed(
+            f"{i18n.t('msg.job_rollback')}: {name}",
+            str(exc),
+            meta={"container": name},
+        )
         return render("_job.html", request, job=job)
 
     job = jobs.start(
-        f"Rollback: {name} ({timestamp})",
+        f"{i18n.t('msg.job_rollback')}: {name} ({timestamp})",
         lambda current: operations.execute_rollback(
             name, timestamp, settings, current.log
         ),
@@ -424,7 +555,7 @@ def job_partial(request: Request, job_id: str):
     job = jobs.get(job_id)
     if not job:
         return HTMLResponse(
-            '<div class="notice err">Dieser Auftrag ist nicht mehr verfügbar.</div>'
+            f'<div class="notice err">{i18n.t("job.gone")}</div>'
         )
     return render("_job.html", request, job=job)
 
@@ -435,20 +566,42 @@ def job_partial(request: Request, job_id: str):
 
 
 @app.post("/containers/{name}/data-dir")
-def save_data_dir(request: Request, name: str, path: str = Form("")):
+def save_data_dir(
+    request: Request,
+    name: str,
+    path: str = Form(""),
+    backup_disabled: str | None = Form(None),
+    backup_data_set: str | None = Form(None),
+):
+    # Die Checkbox heißt „Keine Daten sichern“ – angehakt bedeutet also, dass
+    # kein Datenbackup erstellt wird. Ohne das Marker-Feld (z. B. ältere
+    # Clients) bleibt die Einstellung unverändert.
+    if backup_data_set is None:
+        backup_enabled = config.get_backup_data(name)
+    else:
+        backup_enabled = backup_disabled is None
     try:
-        saved = config.set_data_dir(name, path)
+        saved = ""
+        if backup_enabled:
+            saved = config.set_data_dir(name, path)
+        elif path.strip():
+            saved = config.set_data_dir(name, path)
+        config.set_backup_data(name, backup_enabled)
     except ValueError as exc:
         return redirect_to(f"/containers/{name}", err=str(exc))
-    return redirect_to(
-        f"/containers/{name}", msg=f"Datenverzeichnis gespeichert: {saved}"
-    )
+    if saved:
+        message = i18n.t("msg.data_saved", path=saved)
+        if not backup_enabled:
+            message = f"{message} · {i18n.t('msg.backup_disabled')}"
+    else:
+        message = i18n.t("msg.backup_disabled")
+    return redirect_to(f"/containers/{name}", msg=message)
 
 
 @app.post("/containers/{name}/data-dir/delete")
 def delete_data_dir(request: Request, name: str):
     config.remove_data_dir(name)
-    return redirect_to(f"/containers/{name}", msg="Datenverzeichnis entfernt.")
+    return redirect_to(f"/containers/{name}", msg=i18n.t("msg.data_removed"))
 
 
 @app.get("/browse", response_class=HTMLResponse)
@@ -472,13 +625,15 @@ def backups_page(
     try:
         detail = docker_ops.container_detail(name)
     except docker.errors.NotFound:
-        return _not_found(request, f"Container '{name}' existiert nicht.")
+        return _not_found(
+            request, i18n.t("error.container_missing", name=name)
+        )
     except Exception as exc:  # noqa: BLE001
         return render(
             "error.html",
             request,
             active="containers",
-            title="Docker-Fehler",
+            title=i18n.t("error.docker"),
             message=str(exc),
             status_code=500,
         )
@@ -539,9 +694,9 @@ def cleanup_orphan_images(request: Request, name: str):
     except Exception as exc:  # noqa: BLE001
         return redirect_to(f"/containers/{name}/backups", err=str(exc))
     if removed:
-        message = f"{len(removed)} Rollback-Image(s) ohne Sicherung gelöscht."
+        message = i18n.t("msg.orphans_removed", count=len(removed))
     else:
-        message = "Keine Rollback-Images ohne Sicherung gefunden."
+        message = i18n.t("msg.no_orphans")
     return redirect_to(f"/containers/{name}/backups", msg=message)
 
 
@@ -556,13 +711,31 @@ def delete_backup_files(request: Request, name: str, timestamp: str):
     except Exception as exc:  # noqa: BLE001
         return redirect_to(f"/containers/{name}/backups", err=str(exc))
     return redirect_to(
-        f"/containers/{name}/backups", msg=" · ".join(messages) or "Gelöscht."
+        f"/containers/{name}/backups",
+        msg=" · ".join(messages) or i18n.t("msg.deleted"),
     )
 
 
 # ---------------------------------------------------------------------------
 # Einstellungen
 # ---------------------------------------------------------------------------
+
+
+def _data_dir_rows() -> list[dict]:
+    """Datenverzeichnis-Zuordnungen mit Info, ob gesichert wird."""
+    mapping = config.load_data_dirs()
+    options = config.load_container_options()
+    rows = []
+    for name, path in sorted(mapping.items(), key=lambda item: item[0].lower()):
+        entry = options.get(name) or {}
+        rows.append(
+            {
+                "name": name,
+                "path": path,
+                "backup_data": entry.get("backup_data", True) is not False,
+            }
+        )
+    return rows
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -578,12 +751,12 @@ def settings_page(
         active="settings",
         settings=settings,
         backup_persistent=config.path_is_persistent(settings.backup_dir),
-        data_dirs=config.load_data_dirs(),
+        data_dirs=_data_dir_rows(),
         defaults={
             "backup_dir": config.DEFAULT_BACKUP_DIR,
             "browse_dir": config.DEFAULT_BROWSE_DIR,
-            "watchtower_image": config.DEFAULT_WATCHTOWER_IMAGE,
             "max_rollbacks": config.DEFAULT_MAX_ROLLBACKS,
+            "notify_url": config.DEFAULT_NOTIFY_URL,
         },
         msg=msg,
         err=err,
@@ -595,27 +768,29 @@ def save_settings_form(
     request: Request,
     backup_dir: str = Form(...),
     browse_dir: str = Form(...),
-    watchtower_image: str = Form(...),
     max_rollbacks: str = Form("3"),
+    notify_url: str = Form(""),
 ):
     try:
         config.save_settings(
             config.Settings(
                 backup_dir=backup_dir,
                 browse_dir=browse_dir,
-                watchtower_image=watchtower_image,
                 max_rollbacks=int(max_rollbacks),
+                notify_url=notify_url,
             )
         )
     except ValueError as exc:
         return redirect_to("/settings", err=str(exc))
-    return redirect_to("/settings", msg="Einstellungen gespeichert.")
+    return redirect_to("/settings", msg=i18n.t("msg.settings_saved"))
 
 
 @app.post("/settings/data-dirs/{name}/delete")
 def settings_remove_data_dir(request: Request, name: str):
     config.remove_data_dir(name)
-    return redirect_to("/settings", msg=f"Zuordnung für '{name}' entfernt.")
+    return redirect_to(
+        "/settings", msg=i18n.t("msg.data_mapping_removed", name=name)
+    )
 
 
 # ---------------------------------------------------------------------------

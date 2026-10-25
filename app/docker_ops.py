@@ -10,6 +10,8 @@ import socket
 import docker
 from docker.errors import APIError, DockerException, ImageNotFound, NotFound
 
+from . import i18n
+
 ROLLBACK_TAG = "rollback"
 UPDATEABLE_TAGS = {"latest", "stable", "edge", "nightly", "rolling"}
 
@@ -30,10 +32,7 @@ def get_client() -> docker.DockerClient:
         client = docker.from_env(timeout=int(os.environ.get("DOCKER_TIMEOUT", "600")))
         client.ping()
     except DockerException as exc:
-        raise DockerUnavailable(
-            "Docker-Daemon nicht erreichbar. Ist /var/run/docker.sock "
-            f"eingebunden und lesbar? ({exc})"
-        ) from exc
+        raise DockerUnavailable(i18n.t("docker.unavailable", error=exc)) from exc
     return client
 
 
@@ -66,12 +65,12 @@ def update_hint(ref: str) -> tuple[str, str]:
     """Kurzer Hinweis + CSS-Klasse für die Containerliste."""
     tag = image_tag(ref)
     if tag.startswith(f"{ROLLBACK_TAG}-"):
-        return "ROLLBACK-AKTIV", "rollback"
+        return i18n.t("hint.rollback"), "rollback"
     if "@sha256:" in (ref or "") or _IMAGE_ID_RE.match(ref or ""):
-        return "fester Digest", "fixed"
+        return i18n.t("hint.fixed_digest"), "fixed"
     if tag in UPDATEABLE_TAGS:
-        return "update-fähig", "updateable"
-    return "fester Tag", "fixed"
+        return i18n.t("hint.updateable"), "updateable"
+    return i18n.t("hint.fixed_tag"), "fixed"
 
 
 # ---------------------------------------------------------------------------
@@ -202,12 +201,16 @@ def pull_image(ref: str, log=lambda message: None) -> None:
             if not isinstance(event, dict):
                 continue
             if event.get("error"):
-                raise OperationError(f"Pull-Fehler: {event['error']}")
+                raise OperationError(
+                    i18n.t("docker.pull_error", error=event["error"])
+                )
             status = event.get("status") or ""
             if status.startswith(("Pulling from", "Digest:", "Status:")):
                 log(status)
     except APIError as exc:
-        raise OperationError(f"Image '{ref}' konnte nicht gepullt werden: {exc}") from exc
+        raise OperationError(
+            i18n.t("docker.pull_failed", ref=ref, error=exc)
+        ) from exc
 
 
 def check_update(name: str, log=lambda message: None) -> dict:
@@ -219,9 +222,8 @@ def check_update(name: str, log=lambda message: None) -> dict:
 
     if "@sha256:" in ref or _IMAGE_ID_RE.match(ref):
         return {
-            "status": "nicht prüfbar",
-            "detail": "Container nutzt einen festen Digest bzw. eine Image-ID "
-            "ohne Tag – es gibt keinen aktualisierbaren Tag.",
+            "status": i18n.t("update.status.unknown"),
+            "detail": i18n.t("update.digest_detail"),
             "updateable": False,
             "target": ref,
         }
@@ -230,7 +232,7 @@ def check_update(name: str, log=lambda message: None) -> dict:
         pull_image(ref, log)
     except OperationError as exc:
         return {
-            "status": "nicht prüfbar",
+            "status": i18n.t("update.status.unknown"),
             "detail": str(exc),
             "updateable": False,
             "target": ref,
@@ -240,27 +242,174 @@ def check_update(name: str, log=lambda message: None) -> dict:
         pulled_image = client.images.get(ref).id
     except ImageNotFound:
         return {
-            "status": "nicht prüfbar",
-            "detail": f"Image '{ref}' ist nach dem Pull nicht vorhanden.",
+            "status": i18n.t("update.status.unknown"),
+            "detail": i18n.t("update.image_missing_after_pull", ref=ref),
             "updateable": False,
             "target": ref,
         }
 
     if running_image and pulled_image != running_image:
         return {
-            "status": "UPDATE VERFÜGBAR",
-            "detail": "Das gepullte Image unterscheidet sich vom Image des "
-            f"Containers (Container: {str(running_image).replace('sha256:', '')[:12]}, "
-            f"Registry: {pulled_image.replace('sha256:', '')[:12]}).",
+            "status": i18n.t("update.status.available"),
+            "detail": i18n.t(
+                "update.available_detail",
+                running=str(running_image).replace("sha256:", "")[:12],
+                pulled=pulled_image.replace("sha256:", "")[:12],
+            ),
             "updateable": True,
             "target": ref,
         }
 
     return {
-        "status": "aktuell",
-        "detail": "Der Container nutzt bereits das zuletzt gepullte Image.",
+        "status": i18n.t("update.status.current"),
+        "detail": i18n.t("update.current_detail"),
         "updateable": False,
         "target": ref,
+    }
+
+
+def _repo_digests(attrs: dict) -> list[str]:
+    digests = []
+    for entry in attrs.get("RepoDigests") or []:
+        _, _, value = str(entry).partition("@")
+        if value:
+            digests.append(value)
+    return digests
+
+
+def _registry_info(client, ref: str, arch: str, os_name: str) -> dict:
+    """Digest-Angaben der Registry zu einem Image sammeln.
+
+    ``inspect_distribution`` liefert den Digest des Manifests bzw. des
+    Multi-Arch-Index. Je nach Daemon-Version enthalten die ``Platforms``
+    zusätzlich die Digests der Plattform-Manifeste – oder nur Architektur und
+    Betriebssystem. Beides wird berücksichtigt, damit ein unverändertes Image
+    nicht fälschlich als Update gemeldet wird.
+    """
+    data = client.images.get_registry_data(ref)
+    attrs = getattr(data, "attrs", {}) or {}
+    descriptor = attrs.get("Descriptor") or {}
+    media_type = str(descriptor.get("mediaType") or "")
+    digest = str(descriptor.get("digest") or getattr(data, "id", "") or "")
+    if not digest:
+        raise OperationError(i18n.t("check.no_digest", ref=ref))
+
+    platform = ""
+    for entry in attrs.get("Platforms") or []:
+        if (
+            entry.get("architecture") == arch
+            and entry.get("os") == os_name
+            and entry.get("digest")
+        ):
+            platform = str(entry["digest"])
+            break
+
+    return {
+        "digest": digest,
+        "media_type": media_type,
+        "is_index": "manifest.list" in media_type
+        or "image.index" in media_type
+        or bool(attrs.get("Platforms")),
+        "platform": platform,
+    }
+
+
+def quick_check(name: str, log=lambda message: None) -> dict:
+    """Update-Status ohne Download der Layer ermitteln.
+
+    Verglichen wird der Manifest-Digest der Registry mit den ``RepoDigests``
+    des lokalen Images. Ist das nicht möglich (kein RepoDigest, alte
+    Daemon-Version, private Registry ohne Zugangsdaten), greift die bisherige
+    Prüfung per Pull.
+    """
+    client = get_client()
+    container = client.containers.get(name)
+    ref = (container.attrs.get("Config") or {}).get("Image") or ""
+
+    if "@sha256:" in ref or _IMAGE_ID_RE.match(ref):
+        return {
+            "state": "fixed",
+            "updateable": False,
+            "target": ref,
+            "detail": i18n.t("update.digest_detail"),
+            "method": "none",
+            "remote": "",
+            "local": [],
+        }
+
+    image_attrs: dict = {}
+    try:
+        image_attrs = client.images.get(ref).attrs or {}
+    except ImageNotFound:
+        image_attrs = {}
+
+    local = sorted(_repo_digests(image_attrs))
+    info: dict = {}
+    remote = ""
+    state: str | None = None
+
+    if local:
+        try:
+            info = _registry_info(
+                client,
+                ref,
+                str(image_attrs.get("Architecture") or ""),
+                str(image_attrs.get("Os") or ""),
+            )
+        except (OperationError, APIError, DockerException, NotFound) as exc:
+            log(i18n.t("check.fallback_pull", error=exc))
+            info = {}
+
+    if local and info:
+        if info["digest"] in local:
+            # Der Daemon führt den Manifest- bzw. Index-Digest in RepoDigests.
+            remote = info["digest"]
+            state = "current"
+        elif info["platform"]:
+            # Digest des Plattform-Manifests direkt vergleichen.
+            remote = info["platform"]
+            state = "current" if remote in local else "available"
+        elif not info["is_index"]:
+            # Einzelmanifest: der Descriptor-Digest ist der Plattform-Digest.
+            remote = info["digest"]
+            state = "current" if remote in local else "available"
+        # Index ohne Plattform-Digests: lokal ist nicht eindeutig vergleichbar.
+
+    if local and info and state:
+        detail = (
+            i18n.t("check.digest_current", digest=remote.replace("sha256:", "")[:12])
+            if state == "current"
+            else i18n.t(
+                "check.digest_available",
+                remote=remote.replace("sha256:", "")[:12],
+                local=local[-1].replace("sha256:", "")[:12],
+            )
+        )
+        return {
+            "state": state,
+            "updateable": state == "available",
+            "target": ref,
+            "detail": detail,
+            "method": "registry",
+            "remote": remote,
+            "local": local,
+        }
+
+    fallback = check_update(name, log)
+    if fallback["updateable"]:
+        state = "available"
+    elif fallback["status"] == i18n.t("update.status.current"):
+        state = "current"
+    else:
+        state = "unknown"
+    return {
+        "state": state,
+        "updateable": fallback["updateable"],
+        "target": fallback["target"],
+        "detail": fallback["detail"],
+        "method": "pull",
+        "remote": remote,
+        "local": local,
     }
 
 
@@ -273,11 +422,11 @@ def stop_container(name: str, log=lambda message: None) -> None:
     client = get_client()
     container = client.containers.get(name)
     if container.status == "running":
-        log(f"Stoppe Container '{name}' ...")
+        log(i18n.t("docker.stop", name=name))
         container.stop(timeout=int(os.environ.get("STOP_TIMEOUT", "30")))
-        log("Container gestoppt.")
+        log(i18n.t("docker.stopped"))
     else:
-        log(f"Container '{name}' läuft nicht (Status: {container.status}).")
+        log(i18n.t("docker.not_running", name=name, status=container.status))
 
 
 def start_container(name: str, log=lambda message: None) -> None:
@@ -285,11 +434,11 @@ def start_container(name: str, log=lambda message: None) -> None:
     container = client.containers.get(name)
     container.reload()
     if container.status != "running":
-        log(f"Starte Container '{name}' ...")
+        log(i18n.t("docker.start", name=name))
         container.start()
-        log("Container gestartet.")
+        log(i18n.t("docker.started"))
     else:
-        log("Container läuft.")
+        log(i18n.t("docker.running"))
 
 
 def remove_container(name: str, log=lambda message: None) -> None:
@@ -297,11 +446,11 @@ def remove_container(name: str, log=lambda message: None) -> None:
     try:
         container = client.containers.get(name)
     except NotFound:
-        log(f"Container '{name}' existiert nicht (mehr).")
+        log(i18n.t("docker.gone", name=name))
         return
-    log(f"Entferne Container '{name}' ...")
+    log(i18n.t("docker.remove", name=name))
     container.remove(force=True)
-    log("Container entfernt.")
+    log(i18n.t("docker.removed"))
 
 
 def container_is_running(name: str) -> bool:
@@ -363,10 +512,10 @@ def find_rollback_image(timestamp: str) -> str | None:
 def remove_image(ref: str, log=lambda message: None) -> bool:
     try:
         get_client().images.remove(image=ref, force=False)
-        log(f"Image '{ref}' gelöscht.")
+        log(i18n.t("docker.image_removed", ref=ref))
         return True
     except (APIError, NotFound) as exc:
-        log(f"Image '{ref}' konnte nicht gelöscht werden: {exc}")
+        log(i18n.t("docker.image_remove_failed", ref=ref, error=exc))
         return False
 
 
@@ -375,54 +524,6 @@ def prune_dangling() -> None:
         get_client().images.prune(filters={"dangling": True})
     except DockerException:
         pass
-
-
-def watchtower_update(
-    name: str, watchtower_image: str, log=lambda message: None
-) -> None:
-    """Update über Watchtower --run-once (wie im Original-Skript)."""
-    client = get_client()
-    command = ["--run-once", "--include-stopped", name]
-    log(f"Starte Watchtower ({watchtower_image}) für '{name}' ...")
-    try:
-        runner = client.containers.run(
-            watchtower_image,
-            command,
-            volumes={
-                "/var/run/docker.sock": {
-                    "bind": "/var/run/docker.sock",
-                    "mode": "rw",
-                }
-            },
-            detach=True,
-            remove=False,
-            labels={"de.dockerupdateui.watchtower": "1"},
-        )
-    except ImageNotFound as exc:
-        raise OperationError(
-            f"Watchtower-Image '{watchtower_image}' ist nicht verfügbar: {exc}"
-        ) from exc
-    except DockerException as exc:
-        raise OperationError(f"Watchtower konnte nicht gestartet werden: {exc}") from exc
-
-    try:
-        for chunk in runner.logs(stream=True, follow=True):
-            text = chunk.decode("utf-8", errors="replace").strip()
-            if text:
-                for line in text.splitlines():
-                    log(f"watchtower | {line}")
-        exit_code = runner.wait().get("StatusCode", 1)
-    finally:
-        try:
-            runner.remove(force=True)
-        except DockerException:
-            pass
-
-    if exit_code != 0:
-        raise OperationError(
-            f"Watchtower ist mit Exit-Code {exit_code} beendet. "
-            "Der Container wurde nicht aktualisiert."
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +577,7 @@ def recreate_container(attrs: dict, image_ref: str, log=lambda message: None):
 
     remove_container(name, log)
 
-    log(f"Erstelle Container '{name}' mit Image '{image_ref}' neu ...")
+    log(i18n.t("docker.recreate", name=name, image=image_ref))
     try:
         response = client.api.create_container(
             image=image_ref,
@@ -502,7 +603,7 @@ def recreate_container(attrs: dict, image_ref: str, log=lambda message: None):
         )
     except DockerException as exc:
         raise OperationError(
-            f"Container '{name}' konnte nicht erstellt werden: {exc}"
+            i18n.t("docker.recreate_failed", name=name, error=exc)
         ) from exc
 
     container = client.containers.get(response["Id"])
@@ -518,12 +619,12 @@ def recreate_container(attrs: dict, image_ref: str, log=lambda message: None):
             network.connect(
                 container, **_network_connect_kwargs(network_config or {})
             )
-            log(f"Mit Netzwerk '{network_name}' verbunden.")
+            log(i18n.t("docker.network_connected", name=network_name))
         except DockerException as exc:
-            log(f"WARNUNG: Netzwerk '{network_name}' nicht verbunden: {exc}")
+            log(i18n.t("docker.network_failed", name=network_name, error=exc))
 
     container.start()
-    log("Container gestartet.")
+    log(i18n.t("docker.started"))
     return container
 
 

@@ -2,7 +2,8 @@
 {% block title %}{{ detail.name }}{% endblock %}
 
 {% block content %}
-<div class="crumb"><a href="/">← Alle Container</a></div>
+{% set backup_enabled = backup_data if backup_data is defined else True %}
+<div class="crumb"><a href="/">{{ t('detail.back') }}</a></div>
 
 <div class="page-head">
   <div>
@@ -10,7 +11,7 @@
     <p class="muted mono">{{ detail.image }}</p>
   </div>
   <div class="page-actions">
-    {% if detail.is_self %}<span class="pill neutral">dieses Tool</span>{% endif %}
+    {% if detail.is_self %}<span class="pill neutral">{{ t('table.self') }}</span>{% endif %}
     <span class="pill {{ detail.hint_class }}">{{ detail.hint }}</span>
   </div>
 </div>
@@ -21,96 +22,181 @@
 
 <div class="grid-2">
   <section class="panel">
-    <div class="panel-head"><h2>Update</h2></div>
+    <div class="panel-head"><h2>{{ t('detail.update.title') }}</h2></div>
     {% if detail.is_self %}
       <div class="notice">
-        Dieses Tool aktualisiert sich nicht selbst. Bitte auf dem Host mit
-        <code>docker compose pull &amp;&amp; docker compose up -d</code> erneuern.
+        {{ t('detail.self_note') }}
       </div>
-    {% elif not data_dir %}
+    {% elif not data_dir and backup_enabled %}
       <div class="notice warn">
-        Für diesen Container ist noch kein Datenverzeichnis hinterlegt. Bitte
-        rechts auswählen – ohne Datenverzeichnis wird kein Update gestartet.
+        {{ t('detail.no_data_dir') }}
       </div>
       <button class="button ghost" type="button"
               hx-get="/containers/{{ detail.name|urlencode }}/check"
-              hx-target="#check-area" hx-swap="innerHTML">Update dennoch prüfen</button>
+              hx-target="#check-area" hx-swap="innerHTML">{{ t('detail.check_anyway') }}</button>
     {% else %}
       <p class="muted">
-        Prüft per Pull, ob ein neueres Image vorliegt, und zeigt die geplanten
-        Schritte. Der Pull kann einen Moment dauern.
+        {{ t('detail.update_intro') }}
       </p>
       <div class="row">
         <button class="button primary" type="button"
                 hx-get="/containers/{{ detail.name|urlencode }}/check"
                 hx-target="#check-area" hx-swap="innerHTML"
-                hx-indicator="#check-spinner">Update prüfen</button>
+                hx-indicator="#check-spinner">{{ t('detail.check_button') }}</button>
         <button class="button ghost" type="button"
                 hx-post="/containers/{{ detail.name|urlencode }}/snapshot"
                 hx-target="#job-area" hx-swap="innerHTML"
                 hx-disabled-elt="this"
-                hx-confirm="Snapshot für '{{ detail.name }}' erstellen?&#10;&#10;Der Container wird kurz gestoppt, Daten, Image-Tag und Konfiguration werden gesichert. Es wird nichts aktualisiert.">Snapshot</button>
-        <span id="check-spinner" class="htmx-indicator muted">prüfe Registry …</span>
+                hx-confirm="{{ t('detail.snapshot_confirm', container=detail.name) }}">{{ t('detail.snapshot') }}</button>
+        <span id="check-spinner" class="htmx-indicator muted">{{ t('detail.checking') }}</span>
       </div>
       <p class="hint-text">
-        Snapshot = Sicherungspunkt ohne Update (Daten, Rollback-Image,
-        Konfiguration). Anschließend im Bereich „Backups &amp; Rollbacks“
-        wiederherstellbar.
+        {{ t('detail.snapshot_hint') }}
       </p>
+    {% endif %}
+    {% if not detail.is_self %}
+      {% set tag_blocked = backup_enabled and not data_dir %}
+      <form class="tag-form"
+            hx-post="/containers/{{ detail.name|urlencode }}/tag"
+            hx-target="#job-area" hx-swap="innerHTML"
+            hx-disabled-elt="find button"
+            hx-confirm="{{ t('tag.confirm', container=detail.name) }}">
+        <div class="row">
+          <input name="tag" placeholder="{{ t('tag.placeholder') }}"
+                 aria-label="{{ t('tag.aria') }}" spellcheck="false"
+                 autocomplete="off" required{% if tag_blocked %} disabled{% endif %}>
+          <button class="button ghost" type="submit"{% if tag_blocked %} disabled{% endif %}>{{ t('tag.button') }}</button>
+        </div>
+        <p class="hint-text">{{ t('tag.hint', image=detail.image) }}</p>
+      </form>
     {% endif %}
     <div id="check-area"></div>
     <div id="job-area"></div>
   </section>
 
   <section class="panel">
-    <div class="panel-head"><h2>Datenverzeichnis</h2></div>
+    <div class="panel-head"><h2>{{ t('detail.data.title') }}</h2></div>
     {% if data_dir %}
-      <p class="muted">Hinterlegt: <span class="mono">{{ data_dir }}</span></p>
+      <p class="muted">{{ t('detail.data.configured') }} <span class="mono">{{ data_dir }}</span></p>
       {% if not data_persistent %}
         <div class="notice warn">
-          Dieses Verzeichnis ist im Tool-Container nicht als Volume eingebunden.
-          Bitte <code>- {{ data_dir }}:{{ data_dir }}</code> ergänzen, sonst schlägt
-          das Backup fehl oder landet in der Container-Schicht.
+          {{ t('detail.data.not_persistent', path=data_dir) }}
         </div>
       {% endif %}
     {% else %}
-      <p class="muted">Dieses Verzeichnis wird vor jedem Update archiviert und beim Rollback wiederhergestellt.</p>
+      <p class="muted">{{ t('detail.data.intro_nodata' if not backup_enabled else 'detail.data.intro') }}</p>
     {% endif %}
-    <form method="post" action="/containers/{{ detail.name|urlencode }}/data-dir" class="row">
-      <input id="data-dir-input" name="path" value="{{ data_dir or settings.browse_dir }}"
-             placeholder="/docker/mein-container" spellcheck="false" autocomplete="off">
-      <button type="submit" class="button primary">Speichern</button>
-      <button type="button" class="button ghost" data-open-picker="#dir-picker">Durchsuchen</button>
+    <form method="post" action="/containers/{{ detail.name|urlencode }}/data-dir" class="form">
+      <div class="field">
+        <label for="data-dir-input">{{ t('detail.data.title') }}</label>
+        <input id="data-dir-input" name="path" value="{{ data_dir or settings.browse_dir }}"
+               placeholder="{{ t('detail.data.placeholder') }}" spellcheck="false" autocomplete="off">
+      </div>
+      <input type="hidden" name="backup_data_set" value="1">
+      <label class="check">
+        <input type="checkbox" name="backup_disabled" value="1" {% if not backup_enabled %}checked{% endif %}>
+        {{ t('detail.data.no_backup') }}
+      </label>
+      <p class="hint-text">{{ t('detail.data.no_backup_hint') }}</p>
+      <div class="row">
+        <button type="submit" class="button primary">{{ t('detail.data.save') }}</button>
+        <button type="button" class="button ghost" data-open-picker="#dir-picker">{{ t('detail.data.browse') }}</button>
+      </div>
     </form>
     <p class="hint-text">
-      Der Ordner muss im Tool-Container unter demselben Pfad verfügbar sein, z. B.
-      <code>- {{ data_dir or '/docker/mein-container' }}:{{ data_dir or '/docker/mein-container' }}</code>
+      {{ t('detail.data.hint', path=data_dir or t('detail.data.placeholder')) }}
     </p>
     {% if backup_persistent is defined and not backup_persistent %}
       <div class="notice warn">
-        Das Backup-Verzeichnis ist nicht als Volume eingebunden – erstellte Backups
-        gehen beim Neuerstellen des Tool-Containers verloren.
+        {{ t('detail.backup_not_persistent') }}
       </div>
     {% endif %}
     <div id="dir-picker" class="picker" hidden>
       <div class="picker-head">
-        <strong>Verzeichnis wählen</strong>
-        <button type="button" class="button ghost small" data-close-picker>Schließen</button>
+        <strong>{{ t('detail.picker.title') }}</strong>
+        <button type="button" class="button ghost small" data-close-picker>{{ t('detail.picker.close') }}</button>
       </div>
       <div id="dir-picker-body" class="picker-body">
         <button class="button ghost small" type="button"
                 hx-get="/browse?path={{ settings.browse_dir|urlencode }}"
-                hx-target="#dir-picker-body" hx-swap="innerHTML">Start: {{ settings.browse_dir }}</button>
+                hx-target="#dir-picker-body" hx-swap="innerHTML">{{ t('detail.picker.start') }} {{ settings.browse_dir }}</button>
       </div>
-      <p class="hint-text">Auswahl übernimmt den Pfad in das Feld – anschließend speichern.</p>
+      <p class="hint-text">{{ t('detail.picker.hint') }}</p>
     </div>
   </section>
 </div>
 
 <section class="panel">
   <div class="panel-head">
-    <h2>Backups &amp; Rollbacks</h2>
-    <a class="button ghost small" href="/containers/{{ detail.name|urlencode }}/backups">Alle anzeigen</a>
+    <h2>{{ t('auto.title') }}</h2>
+    {% if auto.last %}<span class="pill {{ auto_class }}">{{ auto_label }}</span>{% endif %}
+  </div>
+  <p class="muted">{{ t('auto.hint') }}</p>
+  {% if auto_skip %}
+    <div class="notice">{{ auto_skip }}</div>
+    <div class="check-result">
+      {% if auto.last %}
+        <p>{{ t('auto.last_run') }} {{ auto.last.at|dt }}</p>
+      {% endif %}
+      <p class="muted">{{ t('auto.disabled') }}</p>
+    </div>
+  {% else %}
+  <form method="post" action="/containers/{{ detail.name|urlencode }}/auto-check" class="form">
+    <label class="check">
+      <input type="checkbox" name="enabled" value="1" {% if auto.enabled %}checked{% endif %}>
+      {{ t('auto.enable') }}
+    </label>
+    <div class="field">
+      <label for="auto-cron">{{ t('auto.cron') }}</label>
+      <input id="auto-cron" name="cron" value="{{ auto.cron }}" spellcheck="false"
+             autocomplete="off" placeholder="{{ default_cron }}">
+      <p class="hint-text">{{ t('auto.cron_hint') }}</p>
+    </div>
+    <div class="field">
+      <label for="auto-mode">{{ t('auto.mode') }}</label>
+      <select id="auto-mode" name="mode">
+        {% for value in ['check', 'notify', 'update'] %}
+          <option value="{{ value }}"{% if auto.mode == value %} selected{% endif %}>{{ t('auto.mode.' ~ value) }}</option>
+        {% endfor %}
+      </select>
+      <p class="hint-text">{{ t('auto.mode_hint') }}</p>
+    </div>
+    {% if auto.mode != 'check' and not settings.notify_url %}
+      <div class="notice warn">{{ t('auto.webhook_missing') }}</div>
+    {% endif %}
+    <div class="row">
+      <button class="button primary" type="submit">{{ t('auto.save') }}</button>
+      <button class="button ghost" type="submit" formnovalidate
+              formaction="/containers/{{ detail.name|urlencode }}/auto-check/run">{{ t('auto.run_now') }}</button>
+    </div>
+  </form>
+  <div class="check-result">
+    <p>
+      {{ t('auto.last_run') }}
+      {% if auto.last %}{{ auto.last.at|dt }} <span class="pill {{ auto_class }}">{{ auto_label }}</span>{% else %}<span class="muted">{{ t('auto.never') }}</span>{% endif %}
+    </p>
+    {% if auto.last %}
+      <p class="muted small">
+        {{ t('auto.method_label') }} {{ t('auto.method.' ~ (auto.last.method or 'none')) }}
+        {% if auto.last.target %}· <span class="mono">{{ auto.last.target }}</span>{% endif %}
+        {% if auto.last.error %}· {{ auto.last.error }}{% endif %}
+      </p>
+      {% if auto_digests.remote or auto_digests.local %}
+        <p class="muted small mono">{{ t('auto.digests', remote=auto_digests.remote or '–', local=auto_digests.local or '–') }}</p>
+      {% endif %}
+    {% endif %}
+    <p class="muted">
+      {% if auto.enabled and auto.next_at %}{{ t('auto.next_run') }} {{ auto.next_at|dt }}
+      {% else %}{{ t('auto.disabled') }}{% endif %}
+    </p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>{{ t('detail.backups.title') }}</h2>
+    <a class="button ghost small" href="/containers/{{ detail.name|urlencode }}/backups">{{ t('detail.backups.all') }}</a>
   </div>
   <div id="backup-area">
     {% include "_backups.html" %}

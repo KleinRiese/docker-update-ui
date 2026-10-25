@@ -2,6 +2,7 @@
   <div class="notice err">{{ error }}</div>
 {% elif plan %}
   {% set check = plan.check %}
+  {% set backup_enabled = plan.get('backup_data', True) %}
   <div class="check-result">
     <div class="check-head">
       <span class="pill {{ 'update' if check.updateable else 'fixed' }}">{{ check.status }}</span>
@@ -9,36 +10,46 @@
     <p class="muted">{{ check.detail }}</p>
 
     <dl class="facts compact">
-      <div><dt>Aktuelles Image</dt><dd class="mono small">{{ plan.current }}</dd></div>
-      <div><dt>Ziel</dt><dd class="mono small">{{ plan.target }}</dd></div>
-      <div><dt>Datenverzeichnis</dt><dd class="mono small">{{ plan.data_dir or 'nicht hinterlegt' }}</dd></div>
-      <div><dt>Backups</dt><dd class="mono small">{{ plan.backup_dir }}</dd></div>
+      <div><dt>{{ t('check.current') }}</dt><dd class="mono small">{{ plan.current }}</dd></div>
+      <div><dt>{{ t('check.target') }}</dt><dd class="mono small">{{ plan.target }}</dd></div>
+      <div><dt>{{ t('check.data_dir') }}</dt><dd class="mono small">{{ plan.data_dir or t('check.not_configured') }}</dd></div>
+      <div><dt>{{ t('check.backups') }}</dt><dd class="mono small">{{ plan.backup_dir }}</dd></div>
     </dl>
 
-    {% if backup_persistent is defined and not backup_persistent %}
+    {% if backup_enabled and backup_persistent is defined and not backup_persistent %}
       <div class="notice warn">
-        Das Backup-Verzeichnis liegt nicht auf einem eingebundenen Volume – die
-        Sicherung wäre nicht dauerhaft. Bitte zuerst die Volumes prüfen.
+        {{ t('check.backup_not_persistent') }}
       </div>
     {% endif %}
 
-    {% if not plan.data_dir %}
+    {% if backup_enabled and not plan.data_dir %}
       <div class="notice warn">
-        Bitte zuerst ein Datenverzeichnis hinterlegen – ohne Backup wird kein
-        Update gestartet.
+        {{ t('check.need_data_dir') }}
       </div>
     {% elif check.updateable %}
+      {% if not backup_enabled %}
+        <div class="notice">
+          {{ t('check.no_data_note') }}
+        </div>
+      {% endif %}
+      {% if plan.mode == 'switch' %}
+        {% set confirm_key = 'check.confirm.switch' if backup_enabled else 'check.confirm.switch_nodata' %}
+      {% else %}
+        {% set confirm_key = 'check.confirm.update' if backup_enabled else 'check.confirm.update_nodata' %}
+      {% endif %}
       <form hx-post="/containers/{{ container|urlencode }}/update"
             hx-target="#job-area" hx-swap="innerHTML"
             hx-disabled-elt="find button"
-            hx-confirm="{% if plan.mode == 'switch' %}Container '{{ container }}' auf das reguläre Image umstellen?&#10;&#10;Ablauf: aktuelles Image als Rollback-Punkt taggen, Container stoppen, Daten nach {{ plan.data_dir }} archivieren, Container neu erstellen und starten.{% else %}Container '{{ container }}' jetzt aktualisieren?&#10;&#10;Ablauf: aktuelles Image als Rollback-Punkt taggen, Container stoppen, Daten nach {{ plan.data_dir }} archivieren, Rollback-Skript erstellen, Update per Watchtower ausführen.{% endif %}">
+            hx-confirm="{{ t(confirm_key, container=container, data_dir=plan.data_dir or '') }}">
         <button class="button primary" type="submit">
-          {% if plan.mode == 'switch' %}Auf reguläres Image umstellen{% else %}Backup erstellen &amp; aktualisieren{% endif %}
+          {% if plan.mode == 'switch' %}{{ t('check.button.switch') }}
+          {% elif backup_enabled %}{{ t('check.button.update') }}
+          {% else %}{{ t('check.button.update_nodata') }}{% endif %}
         </button>
       </form>
     {% else %}
       <div class="notice">
-        Kein Update verfügbar – es wird kein Backup erstellt und nichts geändert.
+        {{ t('check.none') }}
       </div>
     {% endif %}
   </div>

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Backups · {{ detail.name }}{% endblock %}
+{% block title %}{{ t('backups.title') }} · {{ detail.name }}{% endblock %}
 
 {% block content %}
 <div class="crumb"><a href="/containers/{{ detail.name|urlencode }}">← {{ detail.name }}</a></div>
 
 <div class="page-head">
   <div>
-    <h1>Backups &amp; Rollbacks</h1>
-    <p class="muted">Sicherungen, Rollback-Skripte und Rollback-Images für <span class="mono">{{ detail.name }}</span></p>
+    <h1>{{ t('backups.title') }}</h1>
+    <p class="muted">{{ t('backups.subtitle') }} <span class="mono">{{ detail.name }}</span></p>
   </div>
   <div class="page-actions">
     <span class="pill {{ detail.hint_class }}">{{ detail.hint }}</span>
@@ -22,10 +22,10 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h2>Sicherungen</h2>
+    <h2>{{ t('backups.section') }}</h2>
     <button class="button ghost small" type="button"
             hx-get="/containers/{{ detail.name|urlencode }}/partials/backups"
-            hx-target="#backup-area" hx-swap="innerHTML">Aktualisieren</button>
+            hx-target="#backup-area" hx-swap="innerHTML">{{ t('backups.refresh') }}</button>
   </div>
   <div id="backup-area">
     {% include "_backups.html" %}
@@ -33,15 +33,8 @@
 </section>
 
 <section class="panel hint">
-  <h2>Rollback</h2>
-  <p>
-    Ein Rollback über die Oberfläche stoppt und entfernt den Container, spielt
-    die gesicherten Daten zurück und erstellt den Container mit dem beim Update
-    getaggten Rollback-Image neu (Konfiguration aus dem gespeicherten Snapshot).
-  </p>
-  <p class="muted small">
-    Das herunterladbare Rollback-Skript führt dieselben Schritte auf dem
-    Docker-Host aus, falls die Oberfläche nicht erreichbar ist.
-  </p>
+  <h2>{{ t('backups.rollback_title') }}</h2>
+  <p>{{ t('backups.rollback_text') }}</p>
+  <p class="muted small">{{ t('backups.rollback_script_note') }}</p>
 </section>
 {% endblock %}

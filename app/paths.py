@@ -51,4 +51,4 @@ def browse(path: str | None, show_hidden: bool = False) -> dict:
 
 def validate_data_dir(path: str) -> str:
     """Datenverzeichnis prüfen; wirft ValueError mit verständlichem Text."""
-    return require_dir(path, "Datenverzeichnis")
+    return require_dir(path, "label.data_dir")

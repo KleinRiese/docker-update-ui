@@ -2,8 +2,9 @@
 
 Weboberfläche für Docker-Updates – als eigenständiges Alpine-Image. Sie übernimmt
 die Funktionen des Shell-Skripts `update.sh`: Container auswählen, Update prüfen,
-Daten-Backup erstellen, Image als Rollback-Punkt taggen, Update per Watchtower
-ausführen, Rollback-Skript erzeugen und alte Rollback-Punkte aufräumen.
+Daten-Backup erstellen, Image als Rollback-Punkt taggen, neues Image pullen und
+den Container neu erstellen, Rollback-Skript erzeugen und alte Rollback-Punkte
+aufräumen. Die Oberfläche ist auf Deutsch und Englisch verfügbar.
 
 Statt `dialog`/`whiptail` gibt es eine Weboberfläche (FastAPI + HTMX), die den
 Ablauf inklusive Live-Log im Browser zeigt.
@@ -21,9 +22,23 @@ Ablauf inklusive Live-Log im Browser zeigt.
   `<repo>:rollback-<zeitstempel>` getaggt.
 - **Rollback-Skript** (`rollback_<container>_<zeitstempel>.sh`) für die
   Ausführung auf dem Host sowie ein **JSON-Snapshot** der Container-Konfiguration.
-- **Update per Watchtower** (`--run-once --include-stopped`) wie im Original.
-  Läuft ein Container auf einem Rollback-Image, wird er stattdessen mit dem
+- **Update ohne Zusatz-Image**: neues Image pullen und den Container über die
+  Docker-API mit identischer Konfiguration neu erstellen – kein Watchtower,
+  kein `runlike`. Läuft ein Container auf einem Rollback-Image, wird er mit dem
   regulären Tag (`:latest`) neu erstellt.
+- **Zweisprachig** (Deutsch/Englisch): Sprache folgt dem Browser
+  (`Accept-Language`), lässt sich über `DE | EN` in der Kopfzeile umschalten
+  und wird in einem Cookie gespeichert.
+- **Datenbackup abschaltbar**: Für zustandslose Container lässt sich pro
+  Container bestimmen, dass nur das Image als Rollback-Punkt gesichert wird.
+  Solche Punkte erscheinen mit dem Vermerk „nur Image“ und stellen beim
+  Rollback ausschließlich Image und Konfiguration wieder her. In der
+  Container-Übersicht steht in der Spalte Datenverzeichnis dann `N/A`.
+- **Tag-Wechsel**: In der Container-Ansicht lässt sich ein anderes Tag (oder eine
+  vollständige Referenz bzw. ein Digest) desselben Repositories eintragen. Der
+  Ablauf sichert zuerst einen Rollback-Punkt, pullt das Ziel-Image und erstellt
+  den Container mit identischer Konfiguration neu – nützlich, um von einem
+  Rollback-Tag oder von `latest` auf eine feste Version zu wechseln.
 - **Rollback per Klick**: Container stoppen/entfernen, Daten aus dem Backup
   wiederherstellen, Container aus dem gespeicherten Snapshot mit dem
   Rollback-Image neu erstellen und starten. Punkte der alten Skript-Version
@@ -32,8 +47,16 @@ Ablauf inklusive Live-Log im Browser zeigt.
 - **Aufräumen**: pro Container bleiben die neuesten `max_rollbacks`
   Rollback-Punkte (Backup, Skript, Snapshot, Image); ältere werden gelöscht,
   verwaiste Images bereinigt.
+- **Automatische Update-Prüfung**: pro Container per Checkbox aktivierbar und
+  über einen Cron-Ausdruck (5 Felder) terminiert. Geprüft wird über den
+  Manifest-Digest der Registry – ohne das Image herunterzuladen. Drei Aktionen
+  stehen zur Wahl: nur prüfen, prüfen und per Webhook benachrichtigen oder
+  prüfen und automatisch aktualisieren (mit Rollback-Punkt wie beim manuellen
+  Update). Das Ergebnis erscheint in der Container-Liste und auf der
+  Detailseite.
 - **Einstellungen**: Backup-Verzeichnis, Startverzeichnis der Ordnerauswahl,
-  Watchtower-Image und Anzahl der Rollback-Punkte – dauerhaft in `/config`.
+  Anzahl der Rollback-Punkte und Webhook-URL für Benachrichtigungen – dauerhaft
+  in `/config`.
 - **Ordnerauswahl** im Browser statt Pfad-Tippen (mit manueller Eingabe).
 
 ## Schnellstart
@@ -88,23 +111,72 @@ würden.
 
 1. **Container öffnen** (Übersicht → Details).
 2. Beim ersten Mal **Datenverzeichnis** wählen (Durchsuchen oder manuell) und
-   speichern.
+   speichern. Sollen keine Daten gesichert werden, die Checkbox **Keine Daten
+   sichern (nur das Image als Rollback)** setzen – dann ist kein
+   Datenverzeichnis nötig.
 3. **Update prüfen** – das Image wird gepullt und verglichen.
-4. **Backup erstellen & aktualisieren** bestätigen. Danach läuft der Ablauf mit
-   Live-Log:
+4. **Backup erstellen & aktualisieren** (bzw. **Image sichern & aktualisieren**)
+   bestätigen. Danach läuft der Ablauf mit Live-Log:
    - Image taggen (`<repo>:rollback-<zeit>`)
    - Container stoppen
-   - Daten archivieren
+   - Daten archivieren (entfällt ohne Datenbackup)
    - Snapshot + Rollback-Skript schreiben
    - alte Rollback-Punkte löschen
-   - Update per Watchtower (oder Neuerstellen mit regulärem Tag)
+   - neues Image pullen und Container neu erstellen
    - Container starten
 5. **Snapshot** neben *Update prüfen* legt jederzeit einen Sicherungspunkt an,
    ohne das Image zu ändern. Der Container wird dafür kurz gestoppt und danach
    wieder gestartet.
-6. Auf der Seite **Backups & Rollbacks** stellt **Wiederherstellen** in der
+6. **Tag umstellen** im Update-Panel wechselt auf ein anderes Tag desselben
+   Repositories, z. B. `1.2.3`, `latest` oder eine vollständige Referenz. Auch
+   hier wird vorher ein Rollback-Punkt gesichert; ohne Datenbackup (Checkbox)
+   entfällt nur der Daten-Teil.
+7. Auf der Seite **Backups & Rollbacks** stellt **Wiederherstellen** in der
    Zeile eines Zeitpunkts genau diesen Stand wieder her (Daten + Container mit
    dem Rollback-Image).
+8. Im Panel **Automatische Update-Prüfung** derselben Seite lässt sich ein
+   Zeitplan hinterlegen (Details im nächsten Abschnitt).
+
+## Automatische Update-Prüfung
+
+Im Detail-Bereich jedes Containers:
+
+- **Zeitplan (Cron)**: fünf Felder `Minute Stunde Tag Monat Wochentag`
+  (0 = Sonntag). Beispiele: `0 */6 * * *` alle sechs Stunden, `30 4 * * *`
+  täglich 04:30, `0 5 * * 1` montags 05:00. Ungültige Ausdrücke werden beim
+  Speichern abgelehnt (auch solche, die nie zutreffen, etwa `0 0 30 2 *`).
+- **Aktion**: *nur prüfen*, *prüfen und benachrichtigen* oder *prüfen und
+  automatisch aktualisieren*. Das automatische Update nutzt denselben Ablauf
+  wie ein manuelles inklusive Rollback-Punkt und respektiert die
+  Container-Einstellung zum Datenbackup.
+- **Jetzt prüfen** führt die leichte Prüfung sofort aus, ohne auf den Zeitplan
+  zu warten.
+
+Die Prüfung vergleicht den Manifest-Digest der Registry mit dem lokalen Image
+(`docker inspect`-Distribution-API, also über den Daemon und damit auch mit
+dessen Registry-Zugangsdaten). Bei Multi-Arch-Images wird der Digest der
+passenden Plattform verwendet. Lässt sich kein Digest ermitteln – etwa bei
+selbst gebauten Images ohne `RepoDigests` – greift die bisherige Prüfung per
+Pull.
+
+Der Scheduler läuft als Thread im Tool-Container: Er prüft alle 30 Sekunden, ob
+etwas fällig ist, überspringt Container mit laufendem Job sowie den eigenen
+Container und ignoriert Rollback-Tags und feste Tags. Verpasste Termine werden
+nach einem Neustart einmal nachgeholt, nicht gesammelt.
+
+Benachrichtigungen gehen als JSON per POST an die Webhook-URL aus den
+Einstellungen:
+
+```json
+{
+  "container": "homeassistant",
+  "status": "available",
+  "label": "UPDATE VERFÜGBAR",
+  "target": "ghcr.io/home-assistant/home-assistant:latest",
+  "message": "Docker Update: homeassistant – UPDATE VERFÜGBAR (...)",
+  "time": "2026-10-25T14:00:00"
+}
+```
 
 Der Rückweg ist jederzeit möglich: Das Rollback-Skript liegt im Backup-Ordner
 und funktioniert unabhängig von der Weboberfläche:
@@ -122,7 +194,6 @@ In der Oberfläche unter **Einstellungen** oder per Umgebungsvariable:
 | `WEB_PASSWORD` | – (**Pflicht**) | Passwort für die Anmeldung |
 | `BACKUP_DIR` | `/docker/backups` | Basisverzeichnis der Backups |
 | `BROWSE_DIR` | `/docker` | Startverzeichnis der Ordnerauswahl |
-| `WATCHTOWER_IMAGE` | `nickfedor/watchtower` | Image für den Update-Schritt |
 | `MAX_ROLLBACKS` | `3` | Rollback-Punkte pro Container |
 | `CONFIG_DIR` | `/config` | Persistente Einstellungen |
 | `TZ` | `Europe/Berlin` | Zeitzone für Logs und Zeitstempel |
@@ -133,6 +204,10 @@ In der Oberfläche unter **Einstellungen** oder per Umgebungsvariable:
 | `STOP_TIMEOUT` | `30` | Wartezeit beim Stoppen eines Containers |
 | `DOCKER_TIMEOUT` | `600` | HTTP-Timeout für Docker-Aufrufe |
 | `SELF_CONTAINER` | Hostname | Name/ID des Tool-Containers (Schutz vor Selbst-Update) |
+| `NOTIFY_URL` | – | Standard-Webhook-URL für Benachrichtigungen |
+| `AUTO_CHECK_CRON` | `0 4 * * *` | Vorschlag für neue Zeitpläne in der Oberfläche |
+| `AUTO_CHECK_TICK` | `30` | Prüfintervall des Schedulers in Sekunden (min. 5) |
+| `NOTIFY_TIMEOUT` | `10` | Timeout für den Webhook-Aufruf in Sekunden |
 
 ## Migration vom Shell-Skript
 
@@ -152,10 +227,14 @@ erzeugte Rollback-Skripte funktionieren weiterhin auf dem Host.
 
 ## Unterschiede zum Shell-Skript
 
-- **Kein `runlike`, kein Zusatz-Image:** Der Container wird für Rollback und
-  Umschaltung aus der gespeicherten Docker-Konfiguration (Inspect-Snapshot)
-  neu erstellt. Exotische Optionen bleiben dabei erhalten, weil die
-  `HostConfig` vollständig übernommen wird.
+- **Kein `runlike`, kein Watchtower, kein Zusatz-Image:** Der Container wird
+  für Update, Rollback und Umschaltung aus der gespeicherten
+  Docker-Konfiguration (Inspect-Snapshot) neu erstellt. Exotische Optionen
+  bleiben dabei erhalten, weil die `HostConfig` vollständig übernommen wird.
+- **Datenbackup optional:** Für zustandslose Container lässt sich pro Container
+  abschalten, dass Daten archiviert werden. Der Rollback-Punkt besteht dann nur
+  aus Image-Tag und Konfiguration und wird in der Liste als „nur Image“
+  gekennzeichnet.
 - **Update-Prüfung** vergleicht Image-IDs statt Pull-Textausgaben.
 - **Backups werden nicht mehr verschoben, wenn das Verzeichnis ein Mountpunkt
   ist:** Statt `mv` wird der Inhalt ersetzt (das Backup bleibt als
@@ -203,9 +282,14 @@ trotzdem einen abgelehnten Zugriff:
 
 - Nur einzelne Container, kein Docker Swarm/Stack-Update.
 - Compose-Dateien werden nicht bearbeitet; das Tool aktualisiert Images und
-  Container, nicht die `compose.yaml` des Hosts.
-- Watchtower muss das Registry erreichen; private Registries benötigen
-  Anmeldedaten im Docker-Daemon.
+  Container, nicht die `compose.yaml` des Hosts. Nach Update oder Tag-Wechsel
+  setzt ein späteres `docker compose up -d` das dort hinterlegte Image wieder
+  ein.
+- Der Docker-Daemon muss das Registry erreichen können; private Registries
+  benötigen Anmeldedaten im Docker-Daemon.
+- Die automatische Prüfung läuft nur, solange der Tool-Container läuft; sie
+  ersetzt keinen externen Cron. Benachrichtigungen gibt es nur per Webhook
+  (kein SMTP-Versand).
 - Beim Backup wird der Container gestoppt (kurze Ausfallzeit), damit die Daten
   konsistent sind.
 - Ein mehrteiliger `ENTRYPOINT` lässt sich im generierten Shell-Skript nicht
@@ -219,13 +303,17 @@ app/
   main.py          FastAPI-Routen, Auth-Middleware, Templates
   auth.py          Passwort-Login, Sessions, Rate-Limit
   config.py        Einstellungen, Datenverzeichnisse, Legacy-Import
-  docker_ops.py    Docker-API: Liste, Pull, Tagging, Recreate, Watchtower
+  cron.py          Cron-Ausdrücke: prüfen und nächste Laufzeit berechnen
+  autocheck.py     Scheduler, leichte Prüfung, Webhook-Benachrichtigung
+  docker_ops.py    Docker-API: Liste, Pull, Tagging, Recreate
+  i18n.py          Deutsche und englische Texte, Sprachwahl
   operations.py    Update-, Rollback- und Backup-Abläufe
   jobs.py          Hintergrund-Jobs mit Live-Log
   paths.py         Ordnerauswahl
   templates/       Jinja2 + HTMX
   static/          CSS, JS, lokal eingebundenes htmx
 tests/             Pytest-Suite (ohne Docker-Daemon lauffähig)
+README.md          Deutsch; die Oberfläche selbst ist DE/EN
 Dockerfile         python:3.12-alpine, non-interactive Uvicorn
 docker-compose.yml Socket, Backups, Config, Beispiel-Mounts
 ```
@@ -242,5 +330,5 @@ PYTHONPATH=.devdeps:. python3 -m pytest -q tests
 ```
 
 Die Tests decken Login/Rechte, Seitenrendering, Einstellungen, Ordnerauswahl,
-Backup/Restore, Rollback-Skripte, Aufräumen und den Job-Ablauf ab. Sie benötigen
-keinen Docker-Daemon.
+Backup/Restore, Rollback-Skripte, Aufräumen, den Job-Ablauf sowie Cron-Parser,
+Digest-Prüfung und Scheduler ab. Sie benötigen keinen Docker-Daemon.

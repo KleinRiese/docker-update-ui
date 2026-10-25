@@ -1,17 +1,17 @@
 {% if docker_error %}
   <div class="notice err">{{ docker_error }}</div>
 {% elif not rows %}
-  <div class="notice">Keine Container gefunden.</div>
+  <div class="notice">{{ t('table.empty') }}</div>
 {% else %}
 <div class="table-wrap">
   <table class="table">
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Image</th>
-        <th>Status</th>
-        <th>Update</th>
-        <th>Datenverzeichnis</th>
+        <th>{{ t('table.name') }}</th>
+        <th>{{ t('table.image') }}</th>
+        <th>{{ t('table.status') }}</th>
+        <th>{{ t('table.update') }}</th>
+        <th>{{ t('table.data_dir') }}</th>
         <th></th>
       </tr>
     </thead>
@@ -20,17 +20,26 @@
       <tr>
         <td>
           <a class="strong" href="/containers/{{ row.name|urlencode }}">{{ row.name }}</a>
-          {% if row.is_self %}<span class="pill neutral small">dieses Tool</span>{% endif %}
+          {% if row.is_self %}<span class="pill neutral small">{{ t('table.self') }}</span>{% endif %}
         </td>
         <td class="mono small">{{ row.image }}<span class="muted"> · {{ row.image_id }}</span></td>
         <td>
           <span class="state state-{{ row.status }}"></span>
           <span class="small">{{ row.status_text }}</span>
         </td>
-        <td><span class="pill {{ row.hint_class }}">{{ row.hint }}</span></td>
-        <td class="mono small">{{ row.data_dir or '–' }}</td>
+        <td>
+          {% if row.check %}
+            <span class="pill {{ row.check.class }}"
+                  title="{{ t('auto.table_title', time=row.check.at|dt) }}">{{ row.check.label }}</span>
+          {% else %}
+            <span class="pill {{ row.hint_class }}">{{ row.hint }}</span>
+          {% endif %}
+        </td>
+        <td class="mono small">
+          {% if row.get('backup_data', True) %}{{ row.data_dir or '–' }}{% else %}N/A{% endif %}
+        </td>
         <td class="right">
-          <a class="button ghost small" href="/containers/{{ row.name|urlencode }}">Details</a>
+          <a class="button ghost small" href="/containers/{{ row.name|urlencode }}">{{ t('table.details') }}</a>
         </td>
       </tr>
       {% endfor %}

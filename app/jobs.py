@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import contextvars
 import threading
 import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
+
+from . import i18n
 
 
 @dataclass
@@ -57,8 +60,13 @@ class JobManager:
         with self._lock:
             self._jobs[job.id] = job
             self._cleanup()
+        # Sprachwahl des auslösenden Requests in den Job-Thread übernehmen.
+        context = contextvars.copy_context()
         thread = threading.Thread(
-            target=self._run, args=(job, target), name=f"job-{job.id}", daemon=True
+            target=context.run,
+            args=(self._run, job, target),
+            name=f"job-{job.id}",
+            daemon=True,
         )
         thread.start()
         return job
@@ -79,12 +87,20 @@ class JobManager:
         except Exception as exc:  # noqa: BLE001 - Fehler werden im UI angezeigt
             traceback.print_exc()
             message = str(exc) or exc.__class__.__name__
-            job.log(f"FEHLER: {message}")
+            job.log(f"{i18n.t('job.log_error')}: {message}")
             job.fail(message)
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def active_for(self, container: str) -> bool:
+        """Läuft für diesen Container gerade ein Job?"""
+        with self._lock:
+            return any(
+                job.status == "running" and job.meta.get("container") == container
+                for job in self._jobs.values()
+            )
 
     def _cleanup(self) -> None:
         now = time.time()

@@ -280,7 +280,6 @@ def test_settings_page_and_save(logged_in):
             data={
                 "backup_dir": str(backup_dir),
                 "browse_dir": str(browse_dir),
-                "watchtower_image": "nickfedor/watchtower",
                 "max_rollbacks": "5",
             },
             follow_redirects=False,
@@ -295,7 +294,6 @@ def test_settings_page_and_save(logged_in):
             data={
                 "backup_dir": "relativ/pfad",
                 "browse_dir": str(browse_dir),
-                "watchtower_image": "nickfedor/watchtower",
                 "max_rollbacks": "5",
             },
             follow_redirects=False,
@@ -428,7 +426,6 @@ def test_cleanup_rollbacks_keeps_newest(tmp_path, monkeypatch):
     settings = config.Settings(
         backup_dir=str(tmp_path),
         browse_dir=str(tmp_path),
-        watchtower_image="nickfedor/watchtower",
         max_rollbacks=1,
     )
     base = tmp_path / "web"
@@ -451,7 +448,6 @@ def _snapshot_settings(tmp_path):
     return config.Settings(
         backup_dir=str(tmp_path / "backups"),
         browse_dir=str(tmp_path),
-        watchtower_image="nickfedor/watchtower",
         max_rollbacks=3,
     )
 
@@ -595,7 +591,8 @@ def test_execute_snapshot_creates_point_without_update(tmp_path, monkeypatch):
     def no_update(*args, **kwargs):
         raise AssertionError("Snapshot darf kein Update auslösen")
 
-    monkeypatch.setattr(docker_ops, "watchtower_update", no_update)
+    monkeypatch.setattr(docker_ops, "pull_image", no_update)
+    monkeypatch.setattr(docker_ops, "recreate_container", no_update)
 
     result = operations.execute_snapshot("web", settings, log=lambda message: None)
 
@@ -708,7 +705,6 @@ def test_delete_backup(tmp_path):
     settings = config.Settings(
         backup_dir=str(tmp_path),
         browse_dir=str(tmp_path),
-        watchtower_image="nickfedor/watchtower",
         max_rollbacks=3,
     )
     paths = operations.backup_paths(settings, "web", "20240101-000000")
@@ -719,3 +715,1008 @@ def test_delete_backup(tmp_path):
     assert not Path(paths["archive"]).exists()
     assert not Path(paths["script"]).exists()
     assert not Path(paths["snapshot"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# Zweisprachigkeit
+# ---------------------------------------------------------------------------
+
+
+def test_every_translation_has_both_languages():
+    from app import i18n
+
+    empty = [
+        key
+        for key, entry in i18n._STRINGS.items()
+        if not entry[0].strip() or not entry[1].strip()
+    ]
+    assert empty == []
+
+
+def test_all_translation_keys_used_exist():
+    from app import i18n
+
+    missing: list[tuple[str, str]] = []
+    for path in (Path("app/templates")).glob("*.html"):
+        for key in re.findall(
+            r"(?<![\w.])t\('([^']+)'", path.read_text("utf-8")
+        ):
+            if key.endswith("."):
+                continue
+            if key not in i18n._STRINGS:
+                missing.append((path.name, key))
+    for path in Path("app").glob("*.py"):
+        for key in re.findall(r'i18n\.t\(\s*"([^"]+)"', path.read_text("utf-8")):
+            if key not in i18n._STRINGS:
+                missing.append((path.name, key))
+    assert missing == []
+
+
+def test_language_switch_sets_cookie(logged_in, monkeypatch):
+    monkeypatch.setattr(docker_ops, "list_containers", lambda: [])
+    response = logged_in.get("/language/en?next=/", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert response.cookies["dui_lang"] == "en"
+
+    page = logged_in.get("/")
+    assert '<html lang="en">' in page.text
+    assert "Settings" in page.text
+    assert "Sign out" in page.text
+    assert "Einstellungen" not in page.text
+
+
+def test_accept_language_header_selects_english(client):
+    page = client.get("/login", headers={"accept-language": "en-US,en;q=0.9"})
+    assert page.status_code == 200
+    assert "Sign in" in page.text
+    assert "Password" in page.text
+
+
+def test_german_is_default(client):
+    page = client.get("/login")
+    assert "Anmelden" in page.text
+    assert "Passwort" in page.text
+
+
+def test_language_switch_rejects_external_redirect(logged_in):
+    response = logged_in.get(
+        "/language/en?next=//evil.example", follow_redirects=False
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+# ---------------------------------------------------------------------------
+# Update ohne Watchtower, optional ohne Datenbackup
+# ---------------------------------------------------------------------------
+
+
+def _stateless_detail():
+    return dict(
+        CONTAINER_DETAIL,
+        image="nginx:latest",
+        status="running",
+        attrs={
+            "Name": "/stateless",
+            "Config": {"Image": "nginx:latest"},
+            "HostConfig": {},
+            "Mounts": [],
+            "NetworkSettings": {"Networks": {}},
+        },
+    )
+
+
+def _patch_docker(monkeypatch, calls: list, detail: dict, rollback_ref: dict | None = None):
+    monkeypatch.setattr(config, "path_is_persistent", lambda path: True)
+    monkeypatch.setattr(docker_ops, "container_detail", lambda name: dict(detail))
+    monkeypatch.setattr(
+        docker_ops,
+        "tag_rollback_image",
+        lambda name, repo, tag: calls.append(("tag", f"{repo}:{tag}")),
+    )
+    monkeypatch.setattr(
+        docker_ops, "stop_container", lambda name, log=None: calls.append(("stop",))
+    )
+    monkeypatch.setattr(
+        docker_ops, "start_container", lambda name, log=None: calls.append(("start",))
+    )
+    monkeypatch.setattr(docker_ops, "container_is_running", lambda name: False)
+    monkeypatch.setattr(
+        docker_ops, "pull_image", lambda ref, log=None: calls.append(("pull", ref))
+    )
+    monkeypatch.setattr(
+        docker_ops,
+        "recreate_container",
+        lambda attrs, ref, log=None: calls.append(("recreate", ref)),
+    )
+    monkeypatch.setattr(
+        docker_ops,
+        "get_container_attrs",
+        lambda name: {"Config": {"Image": "nginx:latest"}},
+    )
+    monkeypatch.setattr(
+        docker_ops,
+        "check_update",
+        lambda name, log=None: {
+            "status": "UPDATE VERFÜGBAR",
+            "detail": "Test",
+            "updateable": True,
+            "target": "nginx:latest",
+        },
+    )
+    images = (
+        [
+            {
+                "ref": rollback_ref,
+                "id": "abc",
+                "created": 0,
+                "size": 1,
+                "timestamp": rollback_ref.rsplit("rollback-", 1)[1],
+            }
+        ]
+        if rollback_ref
+        else []
+    )
+    monkeypatch.setattr(docker_ops, "list_rollback_images", lambda repo: images)
+    monkeypatch.setattr(docker_ops, "image_exists", lambda ref: True)
+    monkeypatch.setattr(docker_ops, "prune_dangling", lambda: None)
+
+
+def test_update_without_data_backup_uses_native_path(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    config.set_backup_data("stateless", False)
+    calls: list[tuple] = []
+    _patch_docker(monkeypatch, calls, _stateless_detail())
+
+    def no_data_dir(name):
+        return None
+
+    monkeypatch.setattr(config, "get_data_dir", no_data_dir)
+
+    result = operations.execute_update(
+        "stateless", settings, log=lambda message: None
+    )
+
+    assert result["data_backup"] is False
+    assert result["backup_file"] is None
+    assert ("pull", "nginx:latest") in calls
+    assert ("recreate", "nginx:latest") in calls
+    assert not any(call[0] for call in calls if call[0] == "watchtower")
+
+    point = Path(settings.backup_dir) / "stateless"
+    assert not (point / f"stateless-{result['timestamp']}.tar.gz").exists()
+    snapshot = json.loads(
+        (point / f"rollback_stateless_{result['timestamp']}.json").read_text("utf-8")
+    )
+    assert snapshot["data_backup"] is False
+    assert snapshot["backup_file"] is None
+
+    script = Path(result["rollback_script"]).read_text("utf-8")
+    assert "docker run -d --name stateless" in script
+    assert "tar -xzf" not in script
+
+
+def test_image_only_point_is_listed_and_restorable(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    config.set_backup_data("stateless", False)
+    calls: list[tuple] = []
+    detail = _stateless_detail()
+    _patch_docker(monkeypatch, calls, detail)
+    monkeypatch.setattr(config, "get_data_dir", lambda name: None)
+
+    result = operations.execute_update(
+        "stateless", settings, log=lambda message: None
+    )
+    rollback_ref = result["rollback_image"]
+    _patch_docker(monkeypatch, calls, detail, rollback_ref=rollback_ref)
+
+    data = operations.list_backups("stateless", settings)
+    assert len(data["backups"]) == 1
+    point = data["backups"][0]
+    assert point["has_data_backup"] is False
+    assert point["data_backup"] is False
+    assert point["size_text"] == "–"
+    assert point["restorable"] is True
+
+    plan = operations.rollback_plan("stateless", point["timestamp"], settings)
+    assert plan["data_backup"] is False
+    assert plan["archive"] is None
+
+    def no_restore(*args, **kwargs):
+        raise AssertionError("Ohne Datenbackup darf nichts entpackt werden")
+
+    monkeypatch.setattr(operations, "restore_data_dir", no_restore)
+    calls.clear()
+    operations.execute_rollback(
+        "stateless", point["timestamp"], settings, log=lambda message: None
+    )
+    assert ("recreate", rollback_ref) in calls
+
+
+def test_data_backup_checkbox_is_saved(logged_in):
+    data_dir = Path(tempfile.mkdtemp(prefix="dui-data-nobackup-"))
+    response = logged_in.post(
+        "/containers/stateless/data-dir",
+        data={"path": str(data_dir), "backup_data_set": "1", "backup_disabled": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "Datenbackup+abgeschaltet" in response.headers["location"]
+    assert config.get_backup_data("stateless") is False
+    assert config.get_data_dir("stateless") == str(data_dir)
+
+    response = logged_in.post(
+        "/containers/stateless/data-dir",
+        data={"path": str(data_dir), "backup_data_set": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert config.get_backup_data("stateless") is True
+
+
+def test_container_detail_shows_backup_checkbox(logged_in, monkeypatch):
+    monkeypatch.setattr(
+        docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+
+    page = logged_in.get("/containers/web")
+    assert 'name="backup_disabled"' in page.text
+    assert "Keine Daten sichern" in page.text
+    # Standard: Datenbackup aktiv -> Checkbox "Keine Daten sichern" ist aus.
+    assert 'name="backup_disabled" value="1" checked' not in page.text
+
+    logged_in.get("/language/en?next=/containers/web")
+    page = logged_in.get("/containers/web")
+    assert "Do not back up data" in page.text
+    assert "Data directory" in page.text
+
+
+def test_check_partial_without_data_backup(logged_in, monkeypatch):
+    monkeypatch.setattr(
+        operations,
+        "prepare_update",
+        lambda name, settings, log=print: {
+            "mode": "update",
+            "current": "nginx:latest",
+            "target": "nginx:latest",
+            "backup_data": False,
+            "check": {
+                "status": "UPDATE VERFÜGBAR",
+                "detail": "Neueres Image gefunden.",
+                "updateable": True,
+                "target": "nginx:latest",
+            },
+            "data_dir": None,
+            "backup_dir": "/tmp/backups/web",
+            "max_rollbacks": 3,
+        },
+    )
+    page = logged_in.get("/containers/web/check")
+    assert page.status_code == 200
+    assert "Image sichern" in page.text
+    assert "Datenbackup ist für diesen Container abgeschaltet" in page.text
+    assert "Bitte zuerst ein Datenverzeichnis hinterlegen" not in page.text
+    assert "Daten werden nicht gesichert" in page.text
+
+
+# ---------------------------------------------------------------------------
+# Tag-Wechsel
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_target_image_accepts_tag_and_reference():
+    current = "ghcr.io/dispatcharr/dispatcharr:latest"
+    repo = "ghcr.io/dispatcharr/dispatcharr"
+    assert operations.resolve_target_image(current, "1.2.3") == f"{repo}:1.2.3"
+    assert operations.resolve_target_image(current, " latest ") == f"{repo}:latest"
+    assert operations.resolve_target_image(current, f"{repo}:1.2.3") == f"{repo}:1.2.3"
+    digest = "sha256:" + "a" * 64
+    assert operations.resolve_target_image(current, f"{repo}@{digest}") == f"{repo}@{digest}"
+    assert operations.resolve_target_image(current, f"@{digest}") == f"{repo}@{digest}"
+
+
+def test_resolve_target_image_rejects_other_repo_and_invalid():
+    with pytest.raises(operations.OperationError):
+        operations.resolve_target_image(
+            "nginx:latest", "ghcr.io/other/app:1.0"
+        )
+    with pytest.raises(operations.OperationError):
+        operations.resolve_target_image("nginx:latest", "1.0 mit leerzeichen")
+    with pytest.raises(operations.OperationError):
+        operations.resolve_target_image("nginx:latest", "   ")
+    with pytest.raises(operations.OperationError):
+        operations.resolve_target_image("nginx:latest", "sha256:kurz")
+
+
+def test_switch_tag_pulls_and_recreates(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "app.conf").write_text("inhalt")
+    config.set_data_dir("tagtest", str(data_dir))
+    config.set_backup_data("tagtest", True)
+
+    calls: list[tuple] = []
+    _patch_docker(monkeypatch, calls, _stateless_detail())
+    monkeypatch.setattr(
+        docker_ops,
+        "get_container_attrs",
+        lambda name: {"Config": {"Image": "nginx:1.2.3"}},
+    )
+
+    result = operations.execute_switch_tag(
+        "tagtest", "1.2.3", settings, log=lambda message: None
+    )
+
+    assert result["mode"] == "tag"
+    assert result["image"] == "nginx:1.2.3"
+    assert ("pull", "nginx:1.2.3") in calls
+    assert ("recreate", "nginx:1.2.3") in calls
+    assert ("tag", result["rollback_image"]) in calls
+    assert Path(result["backup_file"]).is_file()
+    assert Path(result["rollback_script"]).is_file()
+
+
+def test_switch_tag_rejects_same_tag(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    calls: list[tuple] = []
+    _patch_docker(monkeypatch, calls, _stateless_detail())
+
+    with pytest.raises(operations.OperationError):
+        operations.execute_switch_tag(
+            "tagtest", "latest", settings, log=lambda message: None
+        )
+    assert calls == []
+
+
+def test_switch_tag_needs_data_dir_when_backup_enabled(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    config.set_backup_data("tagtest-ohne-dir", True)
+    config.remove_data_dir("tagtest-ohne-dir")
+    calls: list[tuple] = []
+    _patch_docker(monkeypatch, calls, _stateless_detail())
+
+    with pytest.raises(operations.OperationError):
+        operations.execute_switch_tag(
+            "tagtest-ohne-dir", "1.2.3", settings, log=lambda message: None
+        )
+    assert calls == []
+
+
+def test_tag_route_starts_job(logged_in, monkeypatch):
+    def fake_switch(container, tag, settings, log):
+        log(f"Ziel: {tag}")
+        return {"mode": "tag", "status": "TAG-WECHSEL", "image": f"nginx:{tag}"}
+
+    monkeypatch.setattr(operations, "execute_switch_tag", fake_switch)
+    response = logged_in.post("/containers/web/tag", data={"tag": "1.2.3"})
+    assert response.status_code == 200
+    job_id = re.search(r'id="job-([0-9a-f]+)"', response.text).group(1)
+
+    for _ in range(100):
+        page = logged_in.get(f"/partials/jobs/{job_id}")
+        if "abgeschlossen" in page.text:
+            break
+        time.sleep(0.05)
+    assert "Ziel: 1.2.3" in page.text
+    assert "TAG-WECHSEL" in page.text
+    assert "nginx:1.2.3" in page.text
+
+
+def test_container_detail_has_tag_form(logged_in, monkeypatch):
+    monkeypatch.setattr(
+        docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+    page = logged_in.get("/containers/web")
+    assert 'hx-post="/containers/web/tag"' in page.text
+    assert 'name="tag"' in page.text
+    assert "Tag umstellen" in page.text
+
+
+def test_overview_shows_na_without_data_backup(logged_in, monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    config.set_data_dir("stateless", str(data_dir))
+    config.set_backup_data("stateless", False)
+    try:
+        row = dict(CONTAINER_ROW, name="stateless")
+        monkeypatch.setattr(docker_ops, "list_containers", lambda: [row])
+        page = logged_in.get("/")
+        assert page.status_code == 200
+        assert "N/A" in page.text
+        assert str(data_dir) not in page.text
+    finally:
+        config.set_backup_data("stateless", True)
+
+
+def test_settings_shows_no_data_backup(logged_in, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    config.set_data_dir("homeassistant", str(data_dir))
+    config.set_backup_data("homeassistant", False)
+    try:
+        page = logged_in.get("/settings")
+        assert page.status_code == 200
+        assert "Keine Datensicherung" in page.text
+        assert str(data_dir) not in page.text
+
+        logged_in.get("/language/en?next=/settings")
+        page = logged_in.get("/settings")
+        assert "No data backup" in page.text
+        assert str(data_dir) not in page.text
+    finally:
+        config.set_backup_data("homeassistant", True)
+
+
+# ---------------------------------------------------------------------------
+# Automatische Update-Prüfung
+# ---------------------------------------------------------------------------
+
+import types  # noqa: E402
+
+from app import autocheck, cron  # noqa: E402
+
+
+def test_cron_next_run_daily():
+    schedule = cron.parse("30 4 * * *")
+    assert schedule.next_after(datetime(2026, 10, 25, 12, 0)) == datetime(
+        2026, 10, 26, 4, 30
+    )
+
+
+def test_cron_steps_and_lists():
+    schedule = cron.parse("*/15 0,6 * * *")
+    assert schedule.next_after(datetime(2026, 10, 25, 6, 30)) == datetime(
+        2026, 10, 25, 6, 45
+    )
+    assert schedule.next_after(datetime(2026, 10, 25, 6, 46)) == datetime(
+        2026, 10, 26, 0, 0
+    )
+
+
+def test_cron_weekday_counts_from_sunday():
+    # 2026-10-25 ist ein Sonntag.
+    schedule = cron.parse("0 9 * * 0")
+    assert schedule.next_after(datetime(2026, 10, 25, 10, 0)) == datetime(
+        2026, 11, 1, 9, 0
+    )
+
+
+def test_cron_day_and_weekday_are_combined_with_or():
+    schedule = cron.parse("0 3 1 * 0")
+    # 1. des Monats ODER Sonntag.
+    assert schedule.next_after(datetime(2026, 10, 25, 12, 0)) == datetime(
+        2026, 11, 1, 3, 0
+    )
+
+
+def test_cron_rejects_invalid_expressions():
+    for expression in (
+        "",
+        "* * *",
+        "60 * * * *",
+        "0 24 * * *",
+        "*/0 * * * *",
+        "5-1 * * * *",
+        "kaputt * * * *",
+        "0 0 30 2 *",
+    ):
+        with pytest.raises(cron.CronError):
+            cron.parse(expression)
+
+
+def test_cron_validate_normalizes_whitespace():
+    assert cron.validate("  0   */6 *  * * ") == "0 */6 * * *"
+
+
+def test_auto_check_settings_roundtrip():
+    config.set_auto_check("auto-settings", enabled=True, mode="notify", cron="0 6 * * *")
+    assert config.get_auto_check("auto-settings") == {
+        "enabled": True,
+        "mode": "notify",
+        "cron": "0 6 * * *",
+        "last": None,
+    }
+    with pytest.raises(ValueError):
+        config.set_auto_check("auto-settings", enabled=True, mode="notify", cron="x")
+    with pytest.raises(ValueError):
+        config.set_auto_check(
+            "auto-settings", enabled=True, mode="unbekannt", cron="* * * * *"
+        )
+    # Ungültige Eingabe darf den alten Zeitplan nicht überschreiben.
+    assert config.get_auto_check("auto-settings")["cron"] == "0 6 * * *"
+
+
+def _fake_docker(monkeypatch, *, repo_digests, registry_digest, platforms=None,
+                 arch="amd64"):
+    image = types.SimpleNamespace(
+        attrs={
+            "RepoDigests": repo_digests,
+            "Architecture": arch,
+            "Os": "linux",
+        }
+    )
+    data = types.SimpleNamespace(
+        id=registry_digest,
+        attrs={"Descriptor": {"digest": registry_digest}},
+    )
+    if platforms is not None:
+        data.attrs["Platforms"] = platforms
+    container = types.SimpleNamespace(
+        attrs={
+            "Config": {"Image": "nginx:latest"},
+            "Image": "sha256:" + "b" * 64,
+        }
+    )
+    client = types.SimpleNamespace(
+        images=types.SimpleNamespace(
+            get=lambda ref: image, get_registry_data=lambda ref: data
+        ),
+        containers=types.SimpleNamespace(get=lambda name: container),
+    )
+    monkeypatch.setattr(docker_ops, "get_client", lambda: client)
+    return client
+
+
+def test_quick_check_reports_available_update(monkeypatch):
+    _fake_docker(
+        monkeypatch,
+        repo_digests=["nginx@sha256:" + "a" * 64],
+        registry_digest="sha256:" + "c" * 64,
+    )
+    result = docker_ops.quick_check("web")
+    assert result["state"] == "available"
+    assert result["updateable"] is True
+    assert result["method"] == "registry"
+
+
+def test_quick_check_reports_current_image(monkeypatch):
+    digest = "sha256:" + "a" * 64
+    _fake_docker(
+        monkeypatch, repo_digests=[f"nginx@{digest}"], registry_digest=digest
+    )
+    result = docker_ops.quick_check("web")
+    assert result["state"] == "current"
+    assert result["updateable"] is False
+
+
+def test_quick_check_uses_platform_digest(monkeypatch):
+    # Der Index-Digest unterscheidet sich vom Plattform-Digest; verglichen
+    # werden muss der Digest der eigenen Architektur.
+    index_digest = "sha256:" + "b" * 64
+    platform_digest = "sha256:" + "d" * 64
+    _fake_docker(
+        monkeypatch,
+        repo_digests=[f"nginx@{platform_digest}"],
+        registry_digest=index_digest,
+        platforms=[
+            {"architecture": "arm64", "os": "linux", "digest": "sha256:" + "e" * 64},
+            {"architecture": "amd64", "os": "linux", "digest": platform_digest},
+        ],
+    )
+    result = docker_ops.quick_check("web")
+    assert result["state"] == "current"
+    assert result["remote"] == platform_digest
+
+
+def test_quick_check_falls_back_to_pull(monkeypatch):
+    _fake_docker(
+        monkeypatch,
+        repo_digests=[],
+        registry_digest="sha256:" + "c" * 64,
+    )
+    calls = []
+
+    def fake_check(name, log=print):
+        calls.append(name)
+        return {
+            "status": docker_ops.i18n.t("update.status.available"),
+            "detail": "neu",
+            "updateable": True,
+            "target": "nginx:latest",
+        }
+
+    monkeypatch.setattr(docker_ops, "check_update", fake_check)
+    result = docker_ops.quick_check("web")
+    assert calls == ["web"]
+    assert result["state"] == "available"
+    assert result["method"] == "pull"
+
+
+def test_auto_check_records_result(monkeypatch):
+    monkeypatch.setattr(
+        autocheck.docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops,
+        "quick_check",
+        lambda name, log=print: {
+            "state": "available",
+            "updateable": True,
+            "target": "nginx:latest",
+            "detail": "neu",
+            "method": "registry",
+            "remote": "sha256:" + "c" * 64,
+            "local": ["sha256:" + "a" * 64],
+        },
+    )
+    result = autocheck.run_once("auto-run", mode="check")
+    assert result["state"] == "available"
+    last = config.get_auto_check("auto-run")["last"]
+    assert last["state"] == "available"
+    assert last["target"] == "nginx:latest"
+    assert last["method"] == "registry"
+
+
+def test_auto_check_skips_self_container(monkeypatch):
+    detail = dict(CONTAINER_DETAIL, is_self=True)
+    monkeypatch.setattr(
+        autocheck.docker_ops, "container_detail", lambda name: detail
+    )
+    result = autocheck.run_once("auto-self", mode="update")
+    assert result["state"] == "skipped"
+    assert config.get_auto_check("auto-self")["last"] is None
+
+
+def test_auto_check_notify_posts_webhook(monkeypatch):
+    original = config.load_settings()
+    config.save_settings(
+        config.Settings(
+            original.backup_dir,
+            original.browse_dir,
+            original.max_rollbacks,
+            "https://example.invalid/hook",
+        )
+    )
+    calls = []
+    monkeypatch.setattr(
+        autocheck,
+        "send_notification",
+        lambda url, name, state, target="", error="": calls.append(
+            (url, name, state, target)
+        ),
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops,
+        "quick_check",
+        lambda name, log=print: {
+            "state": "available",
+            "updateable": True,
+            "target": "nginx:latest",
+            "detail": "neu",
+            "method": "registry",
+            "remote": "",
+            "local": [],
+        },
+    )
+    try:
+        autocheck.run_once("auto-notify", mode="notify")
+        assert calls == [
+            ("https://example.invalid/hook", "auto-notify", "available", "nginx:latest")
+        ]
+    finally:
+        config.save_settings(original)
+
+
+def test_auto_check_update_mode_runs_update(monkeypatch):
+    original = config.load_settings()
+    config.save_settings(
+        config.Settings(
+            original.backup_dir,
+            original.browse_dir,
+            original.max_rollbacks,
+            "https://example.invalid/hook",
+        )
+    )
+    monkeypatch.setattr(
+        autocheck, "send_notification", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops,
+        "quick_check",
+        lambda name, log=print: {
+            "state": "available",
+            "updateable": True,
+            "target": "nginx:latest",
+            "detail": "neu",
+            "method": "registry",
+            "remote": "",
+            "local": [],
+        },
+    )
+    updated = []
+    monkeypatch.setattr(
+        autocheck.operations,
+        "execute_update",
+        lambda name, settings, log: updated.append(name) or {"container": name},
+    )
+    try:
+        result = autocheck.run_once("auto-update", mode="update")
+        assert updated == ["auto-update"]
+        assert result["state"] == "updated"
+        assert config.get_auto_check("auto-update")["last"]["state"] == "updated"
+    finally:
+        config.save_settings(original)
+
+
+def test_auto_check_update_mode_records_failure(monkeypatch):
+    original = config.load_settings()
+    config.save_settings(
+        config.Settings(
+            original.backup_dir,
+            original.browse_dir,
+            original.max_rollbacks,
+            "https://example.invalid/hook",
+        )
+    )
+    monkeypatch.setattr(
+        autocheck, "send_notification", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(
+        autocheck.docker_ops,
+        "quick_check",
+        lambda name, log=print: {
+            "state": "available",
+            "updateable": True,
+            "target": "nginx:latest",
+            "detail": "neu",
+            "method": "registry",
+            "remote": "",
+            "local": [],
+        },
+    )
+
+    def broken(name, settings, log):
+        raise operations.OperationError("Pull fehlgeschlagen")
+
+    monkeypatch.setattr(autocheck.operations, "execute_update", broken)
+    try:
+        result = autocheck.run_once("auto-fail", mode="update")
+        assert result["state"] == "error"
+        last = config.get_auto_check("auto-fail")["last"]
+        assert last["state"] == "error"
+        assert "Pull fehlgeschlagen" in last["error"]
+    finally:
+        config.save_settings(original)
+
+
+def test_due_entries_respects_schedule():
+    now = datetime(2026, 10, 25, 4, 0).timestamp()
+    config.set_auto_check("auto-due", enabled=True, mode="check", cron="0 4 * * *")
+    # Noch nie gelaufen: der nächste Slot liegt in der Zukunft.
+    assert "auto-due" not in [name for name, _ in autocheck.due_entries(now)]
+    config.record_auto_check(
+        "auto-due", {"at": now - 24 * 3600, "state": "current"}
+    )
+    assert ("auto-due", "check") in autocheck.due_entries(now)
+    # Nach dem Lauf (Ergebnis mit "at" = jetzt) ist der nächste Slot erst
+    # beim nächsten Cron-Termin fällig.
+    config.record_auto_check("auto-due", {"at": now, "state": "current"})
+    assert "auto-due" not in [
+        name for name, _ in autocheck.due_entries(now + 60)
+    ]
+
+
+def test_due_entries_ignores_disabled_containers():
+    config.set_auto_check(
+        "auto-off", enabled=False, mode="check", cron="*/5 * * * *"
+    )
+    config.record_auto_check("auto-off", {"at": 0.0, "state": "current"})
+    assert "auto-off" not in [name for name, _ in autocheck.due_entries(time.time())]
+
+
+def test_auto_check_route_saves_schedule(logged_in):
+    response = logged_in.post(
+        "/containers/auto-route/auto-check",
+        data={"enabled": "1", "cron": "0 */6 * * *", "mode": "notify"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    entry = config.get_auto_check("auto-route")
+    assert entry["enabled"] is True
+    assert entry["mode"] == "notify"
+    assert entry["cron"] == "0 */6 * * *"
+
+    bad = logged_in.post(
+        "/containers/auto-route/auto-check",
+        data={"cron": "kaputt", "mode": "check"},
+        follow_redirects=False,
+    )
+    assert bad.status_code == 303
+    assert "err=" in bad.headers["location"]
+    assert config.get_auto_check("auto-route")["cron"] == "0 */6 * * *"
+
+
+def test_detail_shows_auto_check_panel(logged_in, monkeypatch):
+    monkeypatch.setattr(
+        docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+    page = logged_in.get("/containers/web")
+    assert "Automatische Update-Prüfung" in page.text
+    assert "Zeitplan (Cron)" in page.text
+    assert 'name="cron"' in page.text
+    assert 'action="/containers/web/auto-check"' in page.text
+
+    logged_in.get("/language/en?next=/containers/web")
+    page = logged_in.get("/containers/web")
+    assert "Automatic update check" in page.text
+    assert "Schedule (cron)" in page.text
+
+
+def test_detail_shows_next_run_and_last_result(logged_in, monkeypatch):
+    config.set_auto_check(
+        "web", enabled=True, mode="check", cron="0 4 * * *"
+    )
+    config.record_auto_check(
+        "web",
+        {
+            "at": time.time(),
+            "state": "available",
+            "target": "nginx:latest",
+            "method": "registry",
+            "remote": "sha256:" + "c" * 64,
+            "local": ["sha256:" + "a" * 64],
+            "error": "",
+        },
+    )
+    monkeypatch.setattr(
+        docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+    try:
+        page = logged_in.get("/containers/web")
+        assert "Nächste Prüfung:" in page.text
+        assert "Registry-Abgleich" in page.text
+        assert "cccccccccccc" in page.text
+    finally:
+        config.set_auto_check("web", enabled=False, mode="check", cron="0 4 * * *")
+        config.record_auto_check("web", None)
+
+
+def test_detail_hides_schedule_for_self_container(logged_in, monkeypatch):
+    detail = dict(CONTAINER_DETAIL, is_self=True)
+    monkeypatch.setattr(docker_ops, "container_detail", lambda name: detail)
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+    page = logged_in.get("/containers/web")
+    assert 'action="/containers/web/auto-check"' not in page.text
+    assert "prüft sich nicht selbst" in page.text
+
+
+def test_overview_shows_auto_check_pill(logged_in, monkeypatch):
+    row = dict(CONTAINER_ROW, name="auto-row")
+    config.record_auto_check(
+        "auto-row",
+        {
+            "at": time.time(),
+            "state": "available",
+            "target": "nginx:latest",
+            "method": "registry",
+            "remote": "",
+            "local": [],
+            "error": "",
+        },
+    )
+    monkeypatch.setattr(docker_ops, "list_containers", lambda: [row])
+    try:
+        page = logged_in.get("/")
+        assert "UPDATE VERFÜGBAR" in page.text
+    finally:
+        config.record_auto_check("auto-row", None)
+
+
+def test_settings_rejects_invalid_webhook(logged_in):
+    original = config.load_settings()
+    response = logged_in.post(
+        "/settings",
+        data={
+            "backup_dir": original.backup_dir,
+            "browse_dir": original.browse_dir,
+            "max_rollbacks": str(original.max_rollbacks),
+            "notify_url": "kein-url",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "err=" in response.headers["location"]
+    assert config.load_settings().notify_url == original.notify_url
+
+
+def test_settings_saves_webhook(logged_in):
+    original = config.load_settings()
+    try:
+        response = logged_in.post(
+            "/settings",
+            data={
+                "backup_dir": original.backup_dir,
+                "browse_dir": original.browse_dir,
+                "max_rollbacks": str(original.max_rollbacks),
+                "notify_url": "https://example.invalid/hook",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert config.load_settings().notify_url == "https://example.invalid/hook"
+    finally:
+        config.save_settings(original)
+
+
+def test_quick_check_matches_index_digest_without_platform_digests(monkeypatch):
+    # Docker mit containerd-Store legt den Index-Digest in RepoDigests ab,
+    # die Platforms enthalten dann keine eigenen Digests.
+    index_digest = "sha256:" + "f" * 64
+    _fake_docker(
+        monkeypatch,
+        repo_digests=[f"nginx@{index_digest}"],
+        registry_digest=index_digest,
+        platforms=[
+            {"architecture": "amd64", "os": "linux"},
+            {"architecture": "unknown", "os": "unknown"},
+            {"architecture": "arm64", "os": "linux"},
+        ],
+    )
+    result = docker_ops.quick_check("web")
+    assert result["state"] == "current"
+    assert result["method"] == "registry"
+
+
+def test_quick_check_falls_back_when_index_is_not_comparable(monkeypatch):
+    # Geänderter Index, aber kein Plattform-Digest zum Vergleich: lieber die
+    # vollständige Pull-Prüfung als ein falsches "Update verfügbar".
+    _fake_docker(
+        monkeypatch,
+        repo_digests=["nginx@sha256:" + "a" * 64],
+        registry_digest="sha256:" + "b" * 64,
+        platforms=[
+            {"architecture": "amd64", "os": "linux"},
+            {"architecture": "arm64", "os": "linux"},
+        ],
+    )
+    calls = []
+
+    def fake_check(name, log=print):
+        calls.append(name)
+        return {
+            "status": docker_ops.i18n.t("update.status.current"),
+            "detail": "gleich",
+            "updateable": False,
+            "target": "nginx:latest",
+        }
+
+    monkeypatch.setattr(docker_ops, "check_update", fake_check)
+    result = docker_ops.quick_check("web")
+    assert calls == ["web"]
+    assert result["method"] == "pull"
+    assert result["state"] == "current"

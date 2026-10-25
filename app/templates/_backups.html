@@ -1,68 +1,77 @@
 {% set orphan_images = data.orphan_images or [] %}
 {% if not data.backups %}
   <div class="notice">
-    Noch keine Sicherungspunkte für diesen Container. Ein Snapshot oder ein
-    Update legt automatisch einen an.
+    {{ t('backups.empty') }}
   </div>
 {% else %}
   <div class="table-wrap">
     <table class="table">
       <thead>
         <tr>
-          <th>Zeitpunkt</th>
-          <th>Größe</th>
-          <th>Rollback-Image</th>
-          <th>Konfiguration</th>
+          <th>{{ t('backups.col.time') }}</th>
+          <th>{{ t('backups.col.size') }}</th>
+          <th>{{ t('backups.col.image') }}</th>
+          <th>{{ t('backups.col.config') }}</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for backup in data.backups %}
+        {% set has_data = backup.get('has_data_backup', True) %}
         <tr>
           <td class="nowrap">
             {{ backup.created|dt }}
             {% if not backup.has_snapshot %}
               <span class="pill neutral small"
-                    title="Von der alten Skript-Version erstellt: Die Container-Konfiguration wird beim Wiederherstellen aus dem laufenden Container übernommen.">ohne Snapshot</span>
+                    title="{{ t('backups.no_snapshot_title') }}">{{ t('backups.no_snapshot') }}</span>
+            {% endif %}
+            {% if not has_data %}
+              <span class="pill neutral small"
+                    title="{{ t('backups.image_only_title') }}">{{ t('backups.image_only') }}</span>
             {% endif %}
           </td>
           <td class="nowrap">{{ backup.size_text }}</td>
           <td class="mono small">
             {{ backup.rollback_image or '–' }}
             {% if backup.rollback_image and not backup.image_present %}
-              <span class="pill err small">Image fehlt</span>
+              <span class="pill err small">{{ t('backups.image_missing') }}</span>
             {% endif %}
           </td>
           <td class="small">
             {% if backup.script %}
-              <a class="link" href="/containers/{{ container|urlencode }}/backups/{{ backup.timestamp }}/script">Rollback-Skript</a>
+              <a class="link" href="/containers/{{ container|urlencode }}/backups/{{ backup.timestamp }}/script">{{ t('backups.script') }}</a>
             {% else %}
-              <span class="muted">kein Skript</span>
+              <span class="muted">{{ t('backups.no_script') }}</span>
             {% endif %}
-            {% if backup.snapshot %}<span class="muted"> · Snapshot</span>{% endif %}
+            {% if backup.snapshot %}<span class="muted"> · {{ t('backups.snapshot') }}</span>{% endif %}
           </td>
           <td class="right actions">
             {% if backup.restorable %}
+              {% if has_data %}
+                {% set confirm = t('backups.restore_confirm', container=container, created=backup.created|dt, data_dir=backup.data_dir, size=backup.size_text) %}
+              {% else %}
+                {% set confirm = t('backups.restore_confirm_nodata', container=container, created=backup.created|dt) %}
+              {% endif %}
               <form hx-post="/containers/{{ container|urlencode }}/rollback"
                     hx-target="#job-area" hx-swap="innerHTML"
                     hx-disabled-elt="find button"
-                    hx-confirm="Wiederherstellen für '{{ container }}' auf {{ backup.created|dt }}?&#10;&#10;Der Container wird gestoppt und entfernt, das Datenverzeichnis {{ backup.data_dir }} wird aus dem Backup ({{ backup.size_text }}) wiederhergestellt und der Container mit dem Rollback-Image neu erstellt.">
+                    hx-confirm="{{ confirm }}">
                 <input type="hidden" name="timestamp" value="{{ backup.timestamp }}">
-                <button class="button danger small" type="submit">Wiederherstellen</button>
+                <button class="button danger small" type="submit">{{ t('backups.restore') }}</button>
               </form>
             {% else %}
               <button class="button ghost small" type="button" disabled
-                      title="{{ backup.restore_hint }}">Wiederherstellen</button>
+                      title="{{ backup.restore_hint }}">{{ t('backups.restore') }}</button>
             {% endif %}
             <form method="post" action="/containers/{{ container|urlencode }}/backups/{{ backup.timestamp }}/delete"
-                  data-confirm="Backup vom {{ backup.created|dt }} inklusive Skript und Snapshot löschen?">
-              <button class="button ghost small" type="submit">Löschen</button>
+                  data-confirm="{{ t('backups.delete_confirm', created=backup.created|dt) }}">
+              <button class="button ghost small" type="submit">{{ t('backups.delete') }}</button>
             </form>
           </td>
         </tr>
         {% if not backup.restorable %}
         <tr class="row-note">
-          <td colspan="5" class="muted small">Wiederherstellen nicht möglich: {{ backup.restore_hint }}</td>
+          <td colspan="5" class="muted small">{{ t('backups.not_restorable') }} {{ backup.restore_hint }}</td>
         </tr>
         {% endif %}
         {% endfor %}
@@ -73,11 +82,12 @@
 
 {% if data.images %}
   <div class="subhead-row">
-    <h3 class="subhead">Rollback-Images</h3>
+    <h3 class="subhead">{{ t('backups.images') }}</h3>
     {% if orphan_images %}
+      {% set orphan_refs = orphan_images|map(attribute='ref')|join('\n') %}
       <form method="post" action="/containers/{{ container|urlencode }}/images/cleanup"
-            data-confirm="{{ orphan_images|length }} Rollback-Image(s) ohne zugehörige Sicherung löschen?&#10;&#10;{% for image in orphan_images %}{{ image.ref }}{% if not loop.last %}&#10;{% endif %}{% endfor %}">
-        <button class="button ghost small" type="submit">Ohne Sicherung löschen</button>
+            data-confirm="{{ t('backups.delete_orphans_confirm', count=orphan_images|length, images=orphan_refs) }}">
+        <button class="button ghost small" type="submit">{{ t('backups.delete_orphans') }}</button>
       </form>
     {% endif %}
   </div>
@@ -89,7 +99,7 @@
           {{ (image.point or image.created)|dt }}
           {% if image.orphan %}
             <span class="pill err small"
-                  title="Zu diesem Image gibt es keinen Sicherungspunkt – typisch für einen abgebrochenen Lauf oder einen von Hand gesetzten Tag.">ohne Sicherung</span>
+                  title="{{ t('backups.orphan_title') }}">{{ t('backups.orphan') }}</span>
           {% endif %}
         </span>
       </li>
@@ -98,7 +108,5 @@
 {% endif %}
 
 <p class="hint-text">
-  Backup-Verzeichnis: <span class="mono">{{ data.backup_dir }}</span> ·
-  Aufbewahrung: {{ max_rollbacks }} Rollback-Punkt(e) pro Container.
-  Rollback-Images „ohne Sicherung“ lassen sich oben löschen.
+  {{ t('backups.hint', path=data.backup_dir, count=max_rollbacks) }}
 </p>

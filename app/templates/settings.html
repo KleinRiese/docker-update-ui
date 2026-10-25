@@ -1,71 +1,70 @@
 {% extends "base.html" %}
-{% block title %}Einstellungen{% endblock %}
+{% block title %}{{ t('settings.title') }}{% endblock %}
 
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>Einstellungen</h1>
-    <p class="muted">Verzeichnisse, Watchtower-Image und Aufbewahrung von Rollback-Punkten.</p>
+    <h1>{{ t('settings.title') }}</h1>
+    <p class="muted">{{ t('settings.subtitle') }}</p>
   </div>
 </div>
 
 {% if not backup_persistent %}
   <div class="notice warn">
-    Das aktuelle Backup-Verzeichnis liegt nicht auf einem eingebundenen Volume.
-    Backups wären nicht dauerhaft – bitte den Pfad als Volume einbinden.
+    {{ t('settings.backup_not_persistent') }}
   </div>
 {% endif %}
 
 <form method="post" action="/settings" class="panel form">
   <div class="field">
-    <label for="backup_dir">Backup-Verzeichnis</label>
+    <label for="backup_dir">{{ t('settings.backup_dir') }}</label>
     <input id="backup_dir" name="backup_dir" value="{{ settings.backup_dir }}" spellcheck="false" required>
-    <p class="hint-text">
-      Im Container unter demselben Pfad wie auf dem Host einbinden
-      (z. B. <code>- /docker/backups:/docker/backups</code>).
-      Standard: <code>{{ defaults.backup_dir }}</code>
-    </p>
+    <p class="hint-text">{{ t('settings.backup_dir_hint', default=defaults.backup_dir) }}</p>
   </div>
 
   <div class="field">
-    <label for="browse_dir">Startverzeichnis für die Ordnerauswahl</label>
+    <label for="browse_dir">{{ t('settings.browse_dir') }}</label>
     <input id="browse_dir" name="browse_dir" value="{{ settings.browse_dir }}" spellcheck="false" required>
-    <p class="hint-text">Muss im Container sichtbar sein, z. B. <code>/docker</code>.</p>
+    <p class="hint-text">{{ t('settings.browse_dir_hint') }}</p>
   </div>
 
   <div class="field">
-    <label for="watchtower_image">Watchtower-Image</label>
-    <input id="watchtower_image" name="watchtower_image" value="{{ settings.watchtower_image }}" spellcheck="false" required>
-    <p class="hint-text">Wird für <code>--run-once --include-stopped</code> verwendet. Standard: <code>{{ defaults.watchtower_image }}</code></p>
-  </div>
-
-  <div class="field">
-    <label for="max_rollbacks">Rollback-Punkte pro Container</label>
+    <label for="max_rollbacks">{{ t('settings.max_rollbacks') }}</label>
     <input id="max_rollbacks" name="max_rollbacks" type="number" min="1" max="50" value="{{ settings.max_rollbacks }}" required>
-    <p class="hint-text">Ältere Backups, Skripte und Rollback-Images werden automatisch gelöscht.</p>
+    <p class="hint-text">{{ t('settings.max_rollbacks_hint') }}</p>
+  </div>
+
+  <div class="field">
+    <label for="notify_url">{{ t('settings.notify_url') }}</label>
+    <input id="notify_url" name="notify_url" value="{{ settings.notify_url }}"
+           spellcheck="false" autocomplete="off" placeholder="https://">
+    <p class="hint-text">{{ t('settings.notify_url_hint') }}</p>
   </div>
 
   <div class="row">
-    <button class="button primary" type="submit">Speichern</button>
-    <a class="button ghost" href="/">Zurück zur Übersicht</a>
+    <button class="button primary" type="submit">{{ t('settings.save') }}</button>
+    <a class="button ghost" href="/">{{ t('settings.back') }}</a>
   </div>
 </form>
 
 <section class="panel">
-  <div class="panel-head"><h2>Datenverzeichnisse</h2></div>
+  <div class="panel-head"><h2>{{ t('settings.data_dirs') }}</h2></div>
   {% if data_dirs %}
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Container</th><th>Verzeichnis</th><th></th></tr></thead>
+        <thead><tr><th>{{ t('settings.col_container') }}</th><th>{{ t('settings.col_dir') }}</th><th></th></tr></thead>
         <tbody>
-          {% for name, path in data_dirs.items() %}
+          {% for row in data_dirs %}
           <tr>
-            <td><a class="strong" href="/containers/{{ name|urlencode }}">{{ name }}</a></td>
-            <td class="mono small">{{ path }}</td>
+            <td><a class="strong" href="/containers/{{ row.name|urlencode }}">{{ row.name }}</a></td>
+            <td class="mono small">
+              {% if row.backup_data %}{{ row.path }}
+              {% else %}<span class="muted">{{ t('settings.no_data_backup') }}</span>{% endif %}
+            </td>
             <td class="right">
-              <form method="post" action="/settings/data-dirs/{{ name|urlencode }}/delete"
-                    data-confirm="Zuordnung für {{ name }} entfernen?">
-                <button class="button ghost small" type="submit">Entfernen</button>
+              <form method="post" action="/settings/data-dirs/{{ row.name|urlencode }}/delete"
+                    data-confirm="{{ t('settings.remove_confirm', name=row.name) }}">
+                <button class="button ghost small" type="submit">{{ t('settings.remove') }}</button>
               </form>
             </td>
           </tr>
@@ -74,22 +73,18 @@
       </table>
     </div>
   {% else %}
-    <div class="notice">Noch keine Datenverzeichnisse hinterlegt – das passiert beim ersten Update pro Container.</div>
+    <div class="notice">{{ t('settings.no_data_dirs') }}</div>
   {% endif %}
 </section>
 
 <section class="panel hint">
-  <h2>Volumes des Tool-Containers</h2>
-  <p>Die Oberfläche arbeitet mit den Pfaden, die sie im eigenen Container sieht. Deshalb müssen Host-Pfade 1:1 eingebunden werden:</p>
+  <h2>{{ t('settings.volumes.title') }}</h2>
+  <p>{{ t('settings.volumes.text') }}</p>
   <pre class="code">volumes:
   - /var/run/docker.sock:/var/run/docker.sock
   - {{ settings.backup_dir }}:{{ settings.backup_dir }}
   - {{ settings.browse_dir }}:{{ settings.browse_dir }}
-  - /docker/mein-container:/docker/mein-container</pre>
-  <p class="muted small">
-    Jedes Datenverzeichnis, das gesichert oder zurückgespielt werden soll, muss
-    ebenfalls 1:1 gemountet sein. Für Backups genügt Leserechte, für Rollbacks
-    werden Schreibrechte benötigt.
-  </p>
+  - {{ t('detail.data.placeholder') }}:{{ t('detail.data.placeholder') }}</pre>
+  <p class="muted small">{{ t('settings.volumes.note') }}</p>
 </section>
 {% endblock %}

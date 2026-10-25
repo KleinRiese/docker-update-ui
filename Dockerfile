@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:3.12-alpine3.21
 
 LABEL org.opencontainers.image.title="docker-update-ui" \
       org.opencontainers.image.description="Weboberfläche für Docker-Updates mit Daten-Backup, Rollback-Images und Rollback-Skripten" \
