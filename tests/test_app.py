@@ -5,6 +5,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote_plus
 
 import pytest
@@ -495,6 +496,92 @@ def test_list_backups_marks_orphan_images(tmp_path, monkeypatch):
     orphans = [image["ref"] for image in data["orphan_images"]]
     assert orphans == ["nginx:rollback-20240102-000000"]
     assert data["images"][0]["point"] == datetime(2024, 1, 1)
+
+
+def test_image_refs_are_compared_without_registry_prefix():
+    assert (
+        docker_ops.normalize_image_ref(
+            "/docker.io/nginx:rollback-20240101-000000"
+        )
+        == "nginx:rollback-20240101-000000"
+    )
+    assert docker_ops.normalize_image_ref("docker.io/library/nginx:rolling") == (
+        "nginx:rolling"
+    )
+    assert docker_ops.normalize_image_ref("nginx") == "nginx:latest"
+
+
+def test_list_rollback_images_matches_prefixed_tags(monkeypatch):
+    images = [
+        SimpleNamespace(
+            tags=["/docker.io/nginx:rollback-20240101-000000"],
+            short_id="sha256:aaa",
+            attrs={"Created": 0, "Size": 1},
+        )
+    ]
+    monkeypatch.setattr(
+        docker_ops,
+        "get_client",
+        lambda: SimpleNamespace(images=SimpleNamespace(list=lambda: images)),
+    )
+
+    found = docker_ops.list_rollback_images("nginx")
+    assert [image["ref"] for image in found] == ["nginx:rollback-20240101-000000"]
+    assert found[0]["timestamp"] == "20240101-000000"
+
+
+def test_list_backups_resolves_prefixed_image_by_timestamp(tmp_path, monkeypatch):
+    settings = _snapshot_settings(tmp_path)
+    base = Path(settings.backup_dir) / "web"
+    base.mkdir(parents=True)
+    (base / "web-20240101-000000.tar.gz").write_bytes(b"x")
+    (base / "rollback_web_20240101-000000.json").write_text(
+        json.dumps(
+            {
+                "rollback_image": "/docker.io/nginx:rollback-20240101-000000",
+                "data_dir": "/srv/web",
+            }
+        )
+    )
+    monkeypatch.setattr(
+        docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
+    )
+    monkeypatch.setattr(docker_ops, "list_rollback_images", lambda repo: [])
+    monkeypatch.setattr(
+        docker_ops,
+        "find_rollback_image",
+        lambda timestamp: f"nginx:rollback-{timestamp}",
+    )
+
+    backup = operations.list_backups("web", settings)["backups"][0]
+    assert backup["rollback_image"] == "nginx:rollback-20240101-000000"
+    assert backup["image_present"] is True
+    assert backup["restorable"] is True
+
+
+def test_rollback_plan_normalizes_snapshot_image(tmp_path, monkeypatch):
+    settings = _snapshot_settings(tmp_path)
+    base = Path(settings.backup_dir) / "web"
+    base.mkdir(parents=True)
+    (base / "web-20240101-000000.tar.gz").write_bytes(b"x")
+    (base / "rollback_web_20240101-000000.json").write_text(
+        json.dumps(
+            {
+                "rollback_image": "/docker.io/nginx:rollback-20240101-000000",
+                "data_dir": "/srv/web",
+                "inspect": {"Config": {"Image": "nginx:latest"}},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        docker_ops,
+        "image_exists",
+        lambda ref: ref == "nginx:rollback-20240101-000000",
+    )
+
+    plan = operations.rollback_plan("web", "20240101-000000", settings)
+    assert plan["image"] == "nginx:rollback-20240101-000000"
+    assert plan["payload"]["rollback_image"] == "nginx:rollback-20240101-000000"
 
 
 def test_legacy_backup_point_without_snapshot_is_restorable(tmp_path, monkeypatch):

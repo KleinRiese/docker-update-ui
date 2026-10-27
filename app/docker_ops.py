@@ -49,6 +49,35 @@ def split_image_ref(ref: str) -> tuple[str, str]:
     return ref or "", "latest"
 
 
+_REGISTRY_PREFIXES = ("docker.io/", "index.docker.io/", "registry-1.docker.io/")
+
+
+def normalize_repo(repo: str) -> str:
+    """Repository ohne Registry-Präfix und ohne führende Schrägstriche."""
+    value = (repo or "").strip().lstrip("/")
+    for prefix in _REGISTRY_PREFIXES:
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+            break
+    if value.startswith("library/"):
+        value = value[len("library/") :]
+    return value
+
+
+def normalize_image_ref(ref: str) -> str:
+    """Image-Referenz vereinheitlichen, damit ``/docker.io/foo`` == ``foo``.
+
+    Docker und Portainer zeigen denselben Tag je nach Herkunft als
+    ``koenkk/zigbee2mqtt:latest``, ``docker.io/koenkk/zigbee2mqtt:latest``
+    oder mit führendem ``/``. Für Vergleiche zählt nur der Kern.
+    """
+    value = (ref or "").strip().lstrip("/")
+    if not value or "@" in value:
+        return value
+    repo, tag = split_image_ref(value)
+    return f"{normalize_repo(repo)}:{tag}"
+
+
 def image_repo(ref: str) -> str:
     return split_image_ref(ref)[0]
 
@@ -484,18 +513,19 @@ def image_exists(ref: str) -> bool:
 
 def list_rollback_images(repo: str) -> list[dict]:
     client = get_client()
-    prefix = f"{repo}:{ROLLBACK_TAG}-"
+    prefix = f"{normalize_repo(repo)}:{ROLLBACK_TAG}-"
     found = []
     for image in client.images.list():
         for tag in image.tags or []:
-            if tag.startswith(prefix):
+            ref = normalize_image_ref(tag)
+            if ref.startswith(prefix):
                 found.append(
                     {
-                        "ref": tag,
+                        "ref": ref,
                         "id": image.short_id.replace("sha256:", ""),
                         "created": image.attrs.get("Created", 0),
                         "size": image.attrs.get("Size", 0),
-                        "timestamp": tag[len(prefix) :],
+                        "timestamp": ref[len(prefix) :],
                     }
                 )
     found.sort(key=lambda item: item["timestamp"], reverse=True)
@@ -508,8 +538,9 @@ def find_rollback_image(timestamp: str) -> str | None:
     client = get_client()
     for image in client.images.list():
         for tag in image.tags or []:
-            if tag.endswith(suffix):
-                return tag
+            ref = normalize_image_ref(tag)
+            if ref.endswith(suffix):
+                return ref
     return None
 
 

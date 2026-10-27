@@ -363,7 +363,7 @@ def list_backups(container: str, settings: Settings) -> dict:
         image["orphan"] = image["timestamp"] not in points
         image_by_timestamp[image["timestamp"]] = image
 
-    present = {image["ref"] for image in images}
+    present = {docker_ops.normalize_image_ref(image["ref"]) for image in images}
     for backup in backups:
         # Punkte der alten Skript-Version haben keinen JSON-Snapshot. Das
         # Rollback-Image ergibt sich dann aus dem Tag-Namen.
@@ -374,14 +374,27 @@ def list_backups(container: str, settings: Settings) -> dict:
         if not backup["data_dir"]:
             backup["data_dir"] = current_data_dir
 
-        backup["image_present"] = bool(backup["rollback_image"]) and (
-            backup["rollback_image"] in present
-        )
+        ref = docker_ops.normalize_image_ref(backup["rollback_image"])
+        if ref and ref not in present:
+            # Snapshots älterer Versionen können den Tag mit Registry-Präfix
+            # oder führendem Schrägstrich gespeichert haben. Der Tag existiert
+            # dann trotzdem, nur unter anderem Namen.
+            try:
+                existing = docker_ops.find_rollback_image(backup["timestamp"])
+            except Exception:  # noqa: BLE001 - Docker-Fehler nicht durchreichen
+                existing = None
+            if existing:
+                ref = docker_ops.normalize_image_ref(existing)
+                present.add(ref)
+        if ref:
+            backup["rollback_image"] = ref
+
+        backup["image_present"] = bool(ref) and ref in present
 
         problems: list[str] = []
-        if not backup["rollback_image"]:
+        if not ref:
             problems.append(i18n.t("err.no_rollback_image"))
-        elif backup["rollback_image"] not in present:
+        elif ref not in present:
             problems.append(i18n.t("err.rollback_image_deleted"))
         if backup["data_backup"] and not backup["has_data_backup"]:
             problems.append(i18n.t("err.backup_missing"))
@@ -861,6 +874,7 @@ def rollback_plan(container: str, timestamp: str, settings: Settings) -> dict:
         image = payload.get("rollback_image")
         if not image:
             raise OperationError(i18n.t("op.rollback_image_missing"))
+        image = docker_ops.normalize_image_ref(image)
         data_backup = bool(payload.get("data_backup", True))
     else:
         # Punkt der alten Skript-Version: Die Container-Konfiguration wird vom
@@ -895,7 +909,20 @@ def rollback_plan(container: str, timestamp: str, settings: Settings) -> dict:
         raise OperationError(i18n.t("op.backup_not_found", path=archive))
 
     if not docker_ops.image_exists(image):
-        raise OperationError(i18n.t("op.rollback_image_gone", ref=image))
+        # Fallback für Snapshots, deren Tag-Schreibweise Docker nicht auflöst:
+        # der Rollback-Tag wird notfalls über seinen Zeitstempel gesucht.
+        try:
+            alternative = docker_ops.find_rollback_image(timestamp)
+        except Exception:  # noqa: BLE001 - Docker-Fehler nicht durchreichen
+            alternative = None
+        if alternative and alternative != image and docker_ops.image_exists(
+            alternative
+        ):
+            image = alternative
+        else:
+            raise OperationError(i18n.t("op.rollback_image_gone", ref=image))
+
+    payload["rollback_image"] = image
 
     return {
         "container": container,
