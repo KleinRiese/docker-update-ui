@@ -34,12 +34,51 @@
     <p class="hint-text">{{ t('settings.max_rollbacks_hint') }}</p>
   </div>
 
+  <h3>{{ t('settings.smtp_title') }}</h3>
+
   <div class="field">
-    <label for="notify_url">{{ t('settings.notify_url') }}</label>
-    <input id="notify_url" name="notify_url" value="{{ settings.notify_url }}"
-           spellcheck="false" autocomplete="off" placeholder="https://">
-    <p class="hint-text">{{ t('settings.notify_url_hint') }}</p>
+    <label for="smtp_host">{{ t('settings.smtp_host') }}</label>
+    <input id="smtp_host" name="smtp_host" value="{{ settings.smtp_host }}"
+           spellcheck="false" autocomplete="off" placeholder="mail.example.com">
+    <p class="hint-text">{{ t('settings.smtp_host_hint') }}</p>
   </div>
+
+  <div class="field">
+    <label for="smtp_port">{{ t('settings.smtp_port') }}</label>
+    <input id="smtp_port" name="smtp_port" type="number" min="1" max="65535"
+           value="{{ settings.smtp_port }}" placeholder="{{ defaults.smtp_port }}">
+  </div>
+
+  <div class="field">
+    <label for="smtp_security">{{ t('settings.smtp_security') }}</label>
+    <select id="smtp_security" name="smtp_security">
+      {% for value in smtp_security_modes %}
+        <option value="{{ value }}"{% if settings.smtp_security == value %} selected{% endif %}>{{ t('settings.smtp_security.' ~ value) }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="smtp_user">{{ t('settings.smtp_user') }}</label>
+    <input id="smtp_user" name="smtp_user" value="{{ settings.smtp_user }}"
+           spellcheck="false" autocomplete="off">
+  </div>
+
+  <div class="field">
+    <label for="smtp_from">{{ t('settings.smtp_from') }}</label>
+    <input id="smtp_from" name="smtp_from" type="email" value="{{ settings.smtp_from }}"
+           spellcheck="false" autocomplete="off" placeholder="docker-update-ui@example.com">
+    <p class="hint-text">{{ t('settings.smtp_from_hint') }}</p>
+  </div>
+
+  <div class="field">
+    <label for="smtp_to">{{ t('settings.smtp_to') }}</label>
+    <input id="smtp_to" name="smtp_to" type="text" value="{{ settings.smtp_to }}"
+           spellcheck="false" autocomplete="off" placeholder="ich@example.com">
+    <p class="hint-text">{{ t('settings.smtp_to_hint') }}</p>
+  </div>
+
+  <p class="hint-text">{{ t('settings.smtp_password_hint') }}</p>
 
   <div class="row">
     <button class="button primary" type="submit">{{ t('settings.save') }}</button>

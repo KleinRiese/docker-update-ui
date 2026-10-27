@@ -8,20 +8,21 @@ bisher das Image gepullt.
 
 from __future__ import annotations
 
-import json
 import os
+import smtplib
+import ssl
 import threading
 import time
 import traceback
-import urllib.error
-import urllib.request
 from datetime import datetime
+from email.message import EmailMessage
+from email.utils import formatdate
 
 from . import config, cron, docker_ops, i18n, operations
 from .jobs import jobs
 
 TICK_SECONDS = max(5.0, float(os.environ.get("AUTO_CHECK_TICK", "30") or 30))
-NOTIFY_TIMEOUT = float(os.environ.get("NOTIFY_TIMEOUT", "10") or 10)
+SMTP_TIMEOUT = float(os.environ.get("SMTP_TIMEOUT", "10") or 10)
 
 # Zustand -> (Textschlüssel, CSS-Klasse für das Label)
 _STATE_LABELS: dict[str, tuple[str, str]] = {
@@ -93,44 +94,63 @@ def _log(name: str):
     return write
 
 
-def send_notification(
-    url: str,
+def build_mail(
+    settings: config.Settings,
     container: str,
     state: str,
     target: str = "",
     error: str = "",
-) -> None:
-    """Webhook mit JSON-Nutzlast aufrufen."""
+) -> EmailMessage:
+    """Nachricht für eine Benachrichtigung bauen."""
     label, _ = state_label(state)
-    message = i18n.t(
+    body = i18n.t(
         "auto.notify.message",
         container=container,
         status=label,
         target=target or "–",
     )
     if error:
-        message = f"{message} ({error})"
-    payload = {
-        "container": container,
-        "status": state,
-        "label": label,
-        "target": target,
-        "message": message,
-        "time": datetime.now().isoformat(timespec="seconds"),
-    }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "docker-update-ui",
-        },
-        method="POST",
+        body = f"{body} ({error})"
+    message = EmailMessage()
+    message["Subject"] = i18n.t(
+        "auto.mail.subject", container=container, status=label
     )
-    with urllib.request.urlopen(request, timeout=NOTIFY_TIMEOUT) as response:
-        status = getattr(response, "status", 200)
-    if status >= 400:
-        raise RuntimeError(f"HTTP {status}")
+    message["From"] = settings.mail_sender
+    message["To"] = settings.smtp_to
+    message["Date"] = formatdate(localtime=True)
+    message.set_content(f"{body}\n")
+    return message
+
+
+def send_email(
+    settings: config.Settings,
+    container: str,
+    state: str,
+    target: str = "",
+    error: str = "",
+) -> None:
+    """Benachrichtigung per SMTP verschicken."""
+    message = build_mail(settings, container, state, target, error)
+    context = ssl.create_default_context()
+    if settings.smtp_security == "ssl":
+        client: smtplib.SMTP = smtplib.SMTP_SSL(
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=SMTP_TIMEOUT,
+            context=context,
+        )
+    else:
+        client = smtplib.SMTP(
+            settings.smtp_host, settings.smtp_port, timeout=SMTP_TIMEOUT
+        )
+    with client:
+        client.ehlo()
+        if settings.smtp_security == "starttls":
+            client.starttls(context=context)
+            client.ehlo()
+        if settings.smtp_user and config.SMTP_PASSWORD:
+            client.login(settings.smtp_user, config.SMTP_PASSWORD)
+        client.send_message(message)
 
 
 def run_once(
@@ -198,15 +218,14 @@ def run_once(
         notify = True
 
     if notify:
-        url = settings.notify_url
-        if url:
+        if settings.smtp_ready:
             try:
-                send_notification(url, name, state, target, error)
-                log(i18n.t("auto.notified"))
-            except (urllib.error.URLError, OSError, RuntimeError) as exc:
+                send_email(settings, name, state, target, error)
+                log(i18n.t("auto.mailed", to=settings.smtp_to))
+            except (OSError, smtplib.SMTPException) as exc:
                 log(i18n.t("auto.notify_failed", error=exc))
         else:
-            log(i18n.t("auto.no_webhook"))
+            log(i18n.t("auto.no_smtp"))
 
     return {"state": state, "target": target, "error": error}
 

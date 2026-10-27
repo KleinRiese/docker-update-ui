@@ -1505,22 +1505,31 @@ def test_auto_check_skips_self_container(monkeypatch):
     assert config.get_auto_check("auto-self")["last"] is None
 
 
-def test_auto_check_notify_posts_webhook(monkeypatch):
-    original = config.load_settings()
-    config.save_settings(
-        config.Settings(
-            original.backup_dir,
-            original.browse_dir,
-            original.max_rollbacks,
-            "https://example.invalid/hook",
-        )
+def _smtp_settings(original, **overrides):
+    values = dict(
+        backup_dir=original.backup_dir,
+        browse_dir=original.browse_dir,
+        max_rollbacks=original.max_rollbacks,
+        smtp_host="mail.example.invalid",
+        smtp_port=587,
+        smtp_user="ui@example.invalid",
+        smtp_from="ui@example.invalid",
+        smtp_to="admin@example.invalid",
+        smtp_security="starttls",
     )
+    values.update(overrides)
+    return config.Settings(**values)
+
+
+def test_auto_check_notify_sends_email(monkeypatch):
+    original = config.load_settings()
+    config.save_settings(_smtp_settings(original))
     calls = []
     monkeypatch.setattr(
         autocheck,
-        "send_notification",
-        lambda url, name, state, target="", error="": calls.append(
-            (url, name, state, target)
+        "send_email",
+        lambda settings, name, state, target="", error="": calls.append(
+            (settings.smtp_to, name, state, target)
         ),
     )
     monkeypatch.setattr(
@@ -1542,7 +1551,7 @@ def test_auto_check_notify_posts_webhook(monkeypatch):
     try:
         autocheck.run_once("auto-notify", mode="notify")
         assert calls == [
-            ("https://example.invalid/hook", "auto-notify", "available", "nginx:latest")
+            ("admin@example.invalid", "auto-notify", "available", "nginx:latest")
         ]
     finally:
         config.save_settings(original)
@@ -1550,17 +1559,8 @@ def test_auto_check_notify_posts_webhook(monkeypatch):
 
 def test_auto_check_update_mode_runs_update(monkeypatch):
     original = config.load_settings()
-    config.save_settings(
-        config.Settings(
-            original.backup_dir,
-            original.browse_dir,
-            original.max_rollbacks,
-            "https://example.invalid/hook",
-        )
-    )
-    monkeypatch.setattr(
-        autocheck, "send_notification", lambda *args, **kwargs: None
-    )
+    config.save_settings(_smtp_settings(original))
+    monkeypatch.setattr(autocheck, "send_email", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         autocheck.docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
     )
@@ -1594,17 +1594,8 @@ def test_auto_check_update_mode_runs_update(monkeypatch):
 
 def test_auto_check_update_mode_records_failure(monkeypatch):
     original = config.load_settings()
-    config.save_settings(
-        config.Settings(
-            original.backup_dir,
-            original.browse_dir,
-            original.max_rollbacks,
-            "https://example.invalid/hook",
-        )
-    )
-    monkeypatch.setattr(
-        autocheck, "send_notification", lambda *args, **kwargs: None
-    )
+    config.save_settings(_smtp_settings(original))
+    monkeypatch.setattr(autocheck, "send_email", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         autocheck.docker_ops, "container_detail", lambda name: dict(CONTAINER_DETAIL)
     )
@@ -1761,7 +1752,7 @@ def test_overview_shows_auto_check_pill(logged_in, monkeypatch):
         config.record_auto_check("auto-row", None)
 
 
-def test_settings_rejects_invalid_webhook(logged_in):
+def test_settings_rejects_invalid_smtp(logged_in):
     original = config.load_settings()
     response = logged_in.post(
         "/settings",
@@ -1769,16 +1760,19 @@ def test_settings_rejects_invalid_webhook(logged_in):
             "backup_dir": original.backup_dir,
             "browse_dir": original.browse_dir,
             "max_rollbacks": str(original.max_rollbacks),
-            "notify_url": "kein-url",
+            "smtp_host": "mail.example.invalid",
+            "smtp_port": "70000",
+            "smtp_to": "admin@example.invalid",
+            "smtp_security": "starttls",
         },
         follow_redirects=False,
     )
     assert response.status_code == 303
     assert "err=" in response.headers["location"]
-    assert config.load_settings().notify_url == original.notify_url
+    assert config.load_settings().smtp_host == original.smtp_host
 
 
-def test_settings_saves_webhook(logged_in):
+def test_settings_saves_smtp(logged_in):
     original = config.load_settings()
     try:
         response = logged_in.post(
@@ -1787,14 +1781,71 @@ def test_settings_saves_webhook(logged_in):
                 "backup_dir": original.backup_dir,
                 "browse_dir": original.browse_dir,
                 "max_rollbacks": str(original.max_rollbacks),
-                "notify_url": "https://example.invalid/hook",
+                "smtp_host": "mail.example.invalid",
+                "smtp_port": "465",
+                "smtp_security": "ssl",
+                "smtp_user": "ui@example.invalid",
+                "smtp_from": "ui@example.invalid",
+                "smtp_to": "admin@example.invalid, ops@example.invalid",
             },
             follow_redirects=False,
         )
         assert response.status_code == 303
-        assert config.load_settings().notify_url == "https://example.invalid/hook"
+        saved = config.load_settings()
+        assert saved.smtp_host == "mail.example.invalid"
+        assert saved.smtp_port == 465
+        assert saved.smtp_security == "ssl"
+        assert saved.smtp_to == "admin@example.invalid, ops@example.invalid"
+        assert saved.smtp_ready is True
     finally:
         config.save_settings(original)
+
+
+def test_send_email_uses_starttls_and_login(monkeypatch):
+    settings = _smtp_settings(config.load_settings())
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            sent["target"] = (host, port, timeout)
+            sent["starttls"] = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def ehlo(self):
+            return None
+
+        def starttls(self, context=None):
+            sent["starttls"] = context is not None
+
+        def login(self, user, password):
+            sent["login"] = (user, password)
+
+        def send_message(self, message):
+            sent["message"] = message
+
+    monkeypatch.setattr(autocheck.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(config, "SMTP_PASSWORD", "geheim")
+
+    autocheck.send_email(
+        settings,
+        "homeassistant",
+        "available",
+        "ghcr.io/home-assistant/home-assistant:latest",
+    )
+
+    assert sent["target"][:2] == ("mail.example.invalid", 587)
+    assert sent["starttls"] is True
+    assert sent["login"] == ("ui@example.invalid", "geheim")
+    message = sent["message"]
+    assert message["To"] == "admin@example.invalid"
+    assert message["From"] == "ui@example.invalid"
+    assert "homeassistant" in message["Subject"]
+    assert "ghcr.io/home-assistant" in message.get_content()
 
 
 def test_quick_check_matches_index_digest_without_platform_digests(monkeypatch):

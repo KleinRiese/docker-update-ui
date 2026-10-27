@@ -30,7 +30,16 @@ def _env_int(name: str, default: int) -> int:
 DEFAULT_BACKUP_DIR = os.environ.get("BACKUP_DIR") or "/docker/backups"
 DEFAULT_BROWSE_DIR = os.environ.get("BROWSE_DIR") or "/docker"
 DEFAULT_MAX_ROLLBACKS = _env_int("MAX_ROLLBACKS", 3)
-DEFAULT_NOTIFY_URL = os.environ.get("NOTIFY_URL", "")
+DEFAULT_SMTP_HOST = os.environ.get("SMTP_HOST", "")
+DEFAULT_SMTP_PORT = _env_int("SMTP_PORT", 587)
+DEFAULT_SMTP_USER = os.environ.get("SMTP_USER", "")
+DEFAULT_SMTP_FROM = os.environ.get("SMTP_FROM", "")
+DEFAULT_SMTP_TO = os.environ.get("SMTP_TO", "")
+DEFAULT_SMTP_SECURITY = os.environ.get("SMTP_SECURITY", "starttls")
+# Passwort bewusst nur aus der Umgebung: es landet nicht in settings.json und
+# wird nie in die Oberfläche gerendert.
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_SECURITY_MODES = ("none", "starttls", "ssl")
 CONTAINER_OPTIONS_FILE = CONFIG_DIR / "container_options.json"
 
 # Modi der automatischen Update-Prüfung
@@ -45,7 +54,21 @@ class Settings:
     backup_dir: str = DEFAULT_BACKUP_DIR
     browse_dir: str = DEFAULT_BROWSE_DIR
     max_rollbacks: int = DEFAULT_MAX_ROLLBACKS
-    notify_url: str = DEFAULT_NOTIFY_URL
+    smtp_host: str = DEFAULT_SMTP_HOST
+    smtp_port: int = DEFAULT_SMTP_PORT
+    smtp_user: str = DEFAULT_SMTP_USER
+    smtp_from: str = DEFAULT_SMTP_FROM
+    smtp_to: str = DEFAULT_SMTP_TO
+    smtp_security: str = DEFAULT_SMTP_SECURITY
+
+    @property
+    def smtp_ready(self) -> bool:
+        """Benachrichtigungen sind eingerichtet, sobald Server und Empfänger stehen."""
+        return bool(self.smtp_host and self.smtp_to)
+
+    @property
+    def mail_sender(self) -> str:
+        return self.smtp_from or self.smtp_user or "docker-update-ui@localhost"
 
 
 def normalize_dir(path: str) -> str:
@@ -99,14 +122,24 @@ def ensure_writable_dir(path: str, label: str = "label.data_dir") -> str:
     return normalized
 
 
-def validate_url(url: str) -> str:
-    """Webhook-URL prüfen: leer oder http(s)."""
-    value = (url or "").strip()
+def validate_host(host: str) -> str:
+    """SMTP-Server prüfen: leer oder ein Hostname ohne Schema/Pfad."""
+    value = (host or "").strip()
     if not value:
         return ""
-    if not value.startswith(("http://", "https://")) or " " in value:
-        raise ValueError(i18n.t("err.notify_url"))
+    if "://" in value or "/" in value or " " in value:
+        raise ValueError(i18n.t("err.smtp_host"))
     return value
+
+
+def validate_email(value: str, error_key: str) -> str:
+    """E-Mail-Adressen prüfen (auch kommagetrennte Listen)."""
+    addresses = [part.strip() for part in (value or "").split(",") if part.strip()]
+    for address in addresses:
+        local, _, domain = address.partition("@")
+        if not local or not domain or "@" in domain or " " in address:
+            raise ValueError(i18n.t(error_key))
+    return ", ".join(addresses)
 
 
 def _validate(settings: Settings) -> Settings:
@@ -118,8 +151,34 @@ def _validate(settings: Settings) -> Settings:
         raise ValueError(i18n.t("err.max_rollbacks_int")) from exc
     if max_rollbacks < 1:
         raise ValueError(i18n.t("err.max_rollbacks_min"))
-    notify_url = validate_url(getattr(settings, "notify_url", ""))
-    return Settings(backup_dir, browse_dir, max_rollbacks, notify_url)
+    smtp_host = validate_host(getattr(settings, "smtp_host", ""))
+    try:
+        smtp_port = int(getattr(settings, "smtp_port", DEFAULT_SMTP_PORT))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(i18n.t("err.smtp_port")) from exc
+    if not 1 <= smtp_port <= 65535:
+        raise ValueError(i18n.t("err.smtp_port"))
+    smtp_security = (
+        getattr(settings, "smtp_security", DEFAULT_SMTP_SECURITY) or "starttls"
+    ).strip().lower()
+    if smtp_security not in SMTP_SECURITY_MODES:
+        raise ValueError(i18n.t("err.smtp_security"))
+    smtp_user = (getattr(settings, "smtp_user", "") or "").strip()
+    smtp_from = validate_email(
+        getattr(settings, "smtp_from", ""), "err.smtp_from"
+    )
+    smtp_to = validate_email(getattr(settings, "smtp_to", ""), "err.smtp_to")
+    return Settings(
+        backup_dir=backup_dir,
+        browse_dir=browse_dir,
+        max_rollbacks=max_rollbacks,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_user=smtp_user,
+        smtp_from=smtp_from,
+        smtp_to=smtp_to,
+        smtp_security=smtp_security,
+    )
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -144,7 +203,12 @@ def load_settings() -> Settings:
         "backup_dir": stored.get("backup_dir", DEFAULT_BACKUP_DIR),
         "browse_dir": stored.get("browse_dir", DEFAULT_BROWSE_DIR),
         "max_rollbacks": stored.get("max_rollbacks", DEFAULT_MAX_ROLLBACKS),
-        "notify_url": stored.get("notify_url", DEFAULT_NOTIFY_URL),
+        "smtp_host": stored.get("smtp_host", DEFAULT_SMTP_HOST),
+        "smtp_port": stored.get("smtp_port", DEFAULT_SMTP_PORT),
+        "smtp_user": stored.get("smtp_user", DEFAULT_SMTP_USER),
+        "smtp_from": stored.get("smtp_from", DEFAULT_SMTP_FROM),
+        "smtp_to": stored.get("smtp_to", DEFAULT_SMTP_TO),
+        "smtp_security": stored.get("smtp_security", DEFAULT_SMTP_SECURITY),
     }
     try:
         return _validate(Settings(**merged))

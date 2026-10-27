@@ -352,12 +352,12 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "auto.mode_hint": (
         "»Automatisch aktualisieren« nutzt denselben Ablauf wie ein manuelles "
         "Update: Rollback-Punkt, Datenbackup laut Container-Einstellung, neues "
-        "Image, Container neu erstellen. Benachrichtigungen gehen an die "
-        "Webhook-URL aus den Einstellungen.",
+        "Image, Container neu erstellen. Benachrichtigungen gehen per E-Mail "
+        "an den SMTP-Server aus den Einstellungen.",
         "»Update automatically« uses the same flow as a manual update: rollback "
         "point, data backup according to the container setting, new image, "
-        "recreate the container. Notifications go to the webhook URL from the "
-        "settings.",
+        "recreate the container. Notifications are sent by email through the "
+        "SMTP server from the settings.",
     ),
     "auto.save": ("Zeitplan speichern", "Save schedule"),
     "auto.run_now": ("Jetzt prüfen", "Check now"),
@@ -400,13 +400,17 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Für diesen Container läuft bereits eine Prüfung.",
         "A check is already running for this container.",
     ),
-    "auto.no_webhook": (
-        "Kein Webhook hinterlegt – die Benachrichtigung entfällt.",
-        "No webhook configured – the notification is skipped.",
+    "auto.no_smtp": (
+        "Kein SMTP-Server hinterlegt – die Benachrichtigung entfällt.",
+        "No SMTP server configured – the notification is skipped.",
     ),
-    "auto.notified": (
-        "Benachrichtigung gesendet.",
-        "Notification sent.",
+    "auto.mailed": (
+        "Benachrichtigung per E-Mail an {to} gesendet.",
+        "Notification sent by email to {to}.",
+    ),
+    "auto.mail.subject": (
+        "Docker Update: {container} – {status}",
+        "Docker update: {container} – {status}",
     ),
     "auto.notify_failed": (
         "Benachrichtigung fehlgeschlagen: {error}",
@@ -416,10 +420,10 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Docker Update: {container} – {status} ({target})",
         "Docker update: {container} – {status} ({target})",
     ),
-    "auto.webhook_missing": (
-        "Für Benachrichtigungen fehlt noch eine Webhook-URL in den "
+    "auto.smtp_missing": (
+        "Für Benachrichtigungen fehlen noch SMTP-Server und Empfänger in den "
         "Einstellungen.",
-        "Notifications still need a webhook URL in the settings.",
+        "Notifications still need an SMTP server and recipient in the settings.",
     ),
     "auto.table_title": (
         "Letzte automatische Prüfung: {time}",
@@ -639,16 +643,37 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Ältere Backups, Skripte und Rollback-Images werden automatisch gelöscht.",
         "Older backups, scripts and rollback images are deleted automatically.",
     ),
-    "settings.notify_url": (
-        "Webhook-URL für Benachrichtigungen",
-        "Webhook URL for notifications",
+    "settings.smtp_title": ("E-Mail-Benachrichtigungen", "Email notifications"),
+    "settings.smtp_host": ("SMTP-Server", "SMTP server"),
+    "settings.smtp_host_hint": (
+        "Hostname ohne Schema, z. B. mail.example.com oder die IP des "
+        "Docker-Hosts.",
+        "Hostname without a scheme, e.g. mail.example.com or the IP of the "
+        "Docker host.",
     ),
-    "settings.notify_url_hint": (
-        "Optional. Bei der Aktion »Prüfen und benachrichtigen« wird ein JSON "
-        "per POST gesendet (Felder: container, status, label, target, message, "
-        "time).",
-        "Optional. With the »check and notify« action a JSON document is POSTed "
-        "(fields: container, status, label, target, message, time).",
+    "settings.smtp_port": ("Port", "Port"),
+    "settings.smtp_security": ("Verschlüsselung", "Encryption"),
+    "settings.smtp_security.none": ("Keine", "None"),
+    "settings.smtp_security.starttls": ("STARTTLS", "STARTTLS"),
+    "settings.smtp_security.ssl": ("SSL/TLS", "SSL/TLS"),
+    "settings.smtp_user": ("Benutzername", "Username"),
+    "settings.smtp_from": ("Absender", "Sender"),
+    "settings.smtp_from_hint": (
+        "Leer lassen, dann wird der Benutzername als Absender verwendet.",
+        "Leave empty to use the username as sender.",
+    ),
+    "settings.smtp_to": ("Empfänger", "Recipient"),
+    "settings.smtp_to_hint": (
+        "Mehrere Adressen mit Komma trennen. Ohne Empfänger werden keine "
+        "Benachrichtigungen versendet.",
+        "Separate multiple addresses with commas. No notifications are sent "
+        "without a recipient.",
+    ),
+    "settings.smtp_password_hint": (
+        "Das SMTP-Passwort wird ausschließlich über die Umgebungsvariable "
+        "SMTP_PASSWORD gesetzt und nie in der Oberfläche angezeigt.",
+        "The SMTP password is only read from the SMTP_PASSWORD environment "
+        "variable and never shown in the interface.",
     ),
     "settings.save": ("Speichern", "Save"),
     "settings.back": ("Zurück zur Übersicht", "Back to the overview"),
@@ -747,9 +772,25 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Max. Rollbacks muss mindestens 1 sein.",
         "Max. rollbacks must be at least 1.",
     ),
-    "err.notify_url": (
-        "Die Webhook-URL muss mit http:// oder https:// beginnen.",
-        "The webhook URL must start with http:// or https://.",
+    "err.smtp_host": (
+        "Der SMTP-Server muss ein Hostname ohne Schema und ohne Pfad sein.",
+        "The SMTP server must be a hostname without a scheme or path.",
+    ),
+    "err.smtp_port": (
+        "Der SMTP-Port muss eine Zahl zwischen 1 und 65535 sein.",
+        "The SMTP port must be a number between 1 and 65535.",
+    ),
+    "err.smtp_security": (
+        "Unbekannte Verschlüsselung für den SMTP-Versand.",
+        "Unknown encryption mode for SMTP.",
+    ),
+    "err.smtp_from": (
+        "Der Absender ist keine gültige E-Mail-Adresse.",
+        "The sender is not a valid email address.",
+    ),
+    "err.smtp_to": (
+        "Der Empfänger ist keine gültige E-Mail-Adresse.",
+        "The recipient is not a valid email address.",
     ),
     "err.auto_mode": (
         "Unbekannte Aktion für die automatische Prüfung.",

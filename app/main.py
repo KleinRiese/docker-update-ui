@@ -756,8 +756,10 @@ def settings_page(
             "backup_dir": config.DEFAULT_BACKUP_DIR,
             "browse_dir": config.DEFAULT_BROWSE_DIR,
             "max_rollbacks": config.DEFAULT_MAX_ROLLBACKS,
-            "notify_url": config.DEFAULT_NOTIFY_URL,
+            "smtp_port": config.DEFAULT_SMTP_PORT,
+            "smtp_security": config.DEFAULT_SMTP_SECURITY,
         },
+        smtp_security_modes=config.SMTP_SECURITY_MODES,
         msg=msg,
         err=err,
     )
@@ -769,7 +771,12 @@ def save_settings_form(
     backup_dir: str = Form(...),
     browse_dir: str = Form(...),
     max_rollbacks: str = Form("3"),
-    notify_url: str = Form(""),
+    smtp_host: str = Form(""),
+    smtp_port: str = Form(""),
+    smtp_user: str = Form(""),
+    smtp_from: str = Form(""),
+    smtp_to: str = Form(""),
+    smtp_security: str = Form("starttls"),
 ):
     try:
         config.save_settings(
@@ -777,7 +784,12 @@ def save_settings_form(
                 backup_dir=backup_dir,
                 browse_dir=browse_dir,
                 max_rollbacks=int(max_rollbacks),
-                notify_url=notify_url,
+                smtp_host=smtp_host,
+                smtp_port=smtp_port or config.DEFAULT_SMTP_PORT,
+                smtp_user=smtp_user,
+                smtp_from=smtp_from,
+                smtp_to=smtp_to,
+                smtp_security=smtp_security,
             )
         )
     except ValueError as exc:

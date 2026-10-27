@@ -38,12 +38,12 @@ Docker socket. It is fully bilingual: German and English.
   with only the image as a restore point. Such points are marked as image-only.
 - **Automatic update checks** per container: cron schedule, three actions
   (check only, check and notify, check and update), registry digest comparison
-  without downloading layers, and webhook notifications.
+  without downloading layers, and email notifications via SMTP.
 - **Retention**: the newest `max_rollbacks` restore points per container are
   kept; older backups, scripts, snapshots and rollback images are deleted.
   Rollback images without a restore point can be removed from the interface.
 - **Settings** for backup directory, folder-picker start directory, number of
-  restore points and notification webhook, stored in `/config`.
+  restore points and the SMTP server for notifications, stored in `/config`.
 - **Folder picker** in the browser instead of typing paths, with manual input as
   a fallback.
 
@@ -140,7 +140,7 @@ Each container can be checked automatically:
   saving, including ones that never match (`0 0 30 2 *`).
 - **Action** when an update is available:
   - *Check only* – record the result,
-  - *Check and notify* – send a webhook,
+  - *Check and notify* – send an email,
   - *Check and update automatically* – run the same flow as a manual update,
     including the restore point and the container's data-backup setting.
 - **Check now** runs the lightweight check immediately, without waiting for the
@@ -161,19 +161,19 @@ container, rollback tags and fixed tags. Missed runs are caught up once after a
 restart, not collected. Times use the container's time zone (`TZ`).
 
 Results appear on the container page (last run, method, compared digests, next
-run) and in the overview table. Notifications are sent as JSON via POST to the
-webhook URL from the settings:
+run) and in the overview table. The »check and notify« action and automatic
+updates send an email through the SMTP server from the settings:
 
-```json
-{
-  "container": "homeassistant",
-  "status": "available",
-  "label": "UPDATE AVAILABLE",
-  "target": "ghcr.io/home-assistant/home-assistant:latest",
-  "message": "Docker update: homeassistant – UPDATE AVAILABLE (...)",
-  "time": "2026-10-25T14:00:00"
-}
 ```
+Subject: Docker update: homeassistant – UPDATE AVAILABLE
+
+Docker update: homeassistant – UPDATE AVAILABLE
+(ghcr.io/home-assistant/home-assistant:latest)
+```
+
+The password is read from `SMTP_PASSWORD` only; it is never stored in
+`/config` nor rendered into the interface. Without SMTP server and recipient
+the notification is skipped and a note appears in the container's check log.
 
 ## Settings
 
@@ -188,10 +188,16 @@ only provide defaults:
 | `MAX_ROLLBACKS` | `3` | Restore points kept per container |
 | `CONFIG_DIR` | `/config` | Persistent settings |
 | `TZ` | `Europe/Berlin` | Time zone for logs, timestamps and schedules |
-| `NOTIFY_URL` | – | Default webhook URL for notifications |
+| `SMTP_HOST` | – | SMTP server for notifications |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_SECURITY` | `starttls` | `none`, `starttls` or `ssl` |
+| `SMTP_USER` | – | SMTP username (also the default sender) |
+| `SMTP_PASSWORD` | – | SMTP password, only read from the environment |
+| `SMTP_FROM` | – | Sender address |
+| `SMTP_TO` | – | Recipient(s), comma-separated |
+| `SMTP_TIMEOUT` | `10` | Timeout for the SMTP connection in seconds |
 | `AUTO_CHECK_CRON` | `0 4 * * *` | Suggested schedule for new entries |
 | `AUTO_CHECK_TICK` | `30` | Scheduler interval in seconds (minimum 5) |
-| `NOTIFY_TIMEOUT` | `10` | Timeout for the webhook call in seconds |
 | `SESSION_TTL` | `43200` | Session lifetime in seconds |
 | `COOKIE_SECURE` | `0` | `1` when the UI is only reachable via HTTPS |
 | `ALLOWED_ORIGINS` | – | Additional host names for the origin check (reverse proxy) |
@@ -237,7 +243,7 @@ proxies work. If the interface still rejects a request:
   credentials in the daemon.
 - Backups stop the container briefly, so the data is consistent.
 - Automatic checks run only while the tool container is running; notifications
-  are webhook-only (no SMTP). Automatic updates appear in the container log
+  are sent by email (SMTP) when a check runs, without retries. Automatic updates appear in the container log
   (`docker logs`), their result is stored and shown in the interface.
 - A multi-part `ENTRYPOINT` cannot be expressed as a single `--entrypoint`
   argument in the generated rollback script; the script then contains a note.
@@ -251,7 +257,7 @@ app/
   auth.py          password login, sessions, rate limit, origin check
   config.py        settings, data directories, per-container options
   cron.py          cron expressions: validation and next run
-  autocheck.py     scheduler, lightweight check, webhook notification
+  autocheck.py     scheduler, lightweight check, email notification
   docker_ops.py    Docker API: list, pull, tagging, recreate, digest check
   i18n.py          German and English texts, language selection
   operations.py    update, snapshot, rollback and backup flows

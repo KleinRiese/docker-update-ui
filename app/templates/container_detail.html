@@ -161,8 +161,8 @@
       </select>
       <p class="hint-text">{{ t('auto.mode_hint') }}</p>
     </div>
-    {% if auto.mode != 'check' and not settings.notify_url %}
-      <div class="notice warn">{{ t('auto.webhook_missing') }}</div>
+    {% if auto.mode != 'check' and not settings.smtp_ready %}
+      <div class="notice warn">{{ t('auto.smtp_missing') }}</div>
     {% endif %}
     <div class="row">
       <button class="button primary" type="submit">{{ t('auto.save') }}</button>
