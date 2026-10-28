@@ -1,6 +1,10 @@
 services:
   docker-update-ui:
-    build: .
+    build:
+      context: .
+      # Commit für die Versionsanzeige: GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
     image: docker-update-ui:latest
     container_name: docker-update-ui
     restart: unless-stopped

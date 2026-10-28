@@ -37,6 +37,7 @@
 </main>
 <footer class="footer">
   <span>{{ t('footer.text') }} <code>/var/run/docker.sock</code></span>
+  <span class="footer-meta mono">{{ t('footer.version', version=app_version, commit=app_commit() or t('footer.commit_unknown')) }}</span>
 </footer>
 </body>
 </html>

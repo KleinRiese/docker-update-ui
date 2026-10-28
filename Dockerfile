@@ -1,5 +1,9 @@
 FROM python:3.12-alpine3.21
 
+# Commit, aus dem gebaut wird – die Oberfläche zeigt ihn im Footer an:
+# docker build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) ...
+ARG GIT_COMMIT=""
+
 LABEL org.opencontainers.image.title="docker-update-ui" \
       org.opencontainers.image.description="Weboberfläche für Docker-Updates mit Daten-Backup, Rollback-Images und Rollback-Skripten" \
       org.opencontainers.image.source="local"
@@ -11,7 +15,8 @@ ENV PYTHONUNBUFFERED=1 \
     CONFIG_DIR=/config \
     BACKUP_DIR=/docker/backups \
     BROWSE_DIR=/docker \
-    TZ=Europe/Berlin
+    TZ=Europe/Berlin \
+    GIT_COMMIT=${GIT_COMMIT}
 
 WORKDIR /app
 

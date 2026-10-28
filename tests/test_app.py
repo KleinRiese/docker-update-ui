@@ -1792,6 +1792,19 @@ def test_detail_hides_schedule_for_digest_pin(logged_in, monkeypatch):
     assert "dieses Image kann sich nicht ändern" in page.text
 
 
+def test_footer_shows_version_and_commit(logged_in, monkeypatch):
+    from app import version
+
+    monkeypatch.setenv("GIT_COMMIT", "abcdef1234567890")
+    page = logged_in.get("/settings")
+    assert f"Version {version.VERSION}" in page.text
+    assert "Commit abcdef123456" in page.text
+
+    monkeypatch.delenv("GIT_COMMIT")
+    page = logged_in.get("/settings")
+    assert "Commit unbekannt" in page.text
+
+
 def test_detail_shows_next_run_and_last_result(logged_in, monkeypatch):
     config.set_auto_check(
         "web", enabled=True, mode="check", cron="0 4 * * *"

@@ -118,6 +118,7 @@ h3 { font-size: 14px; }
   font-size: 12px;
   text-align: center;
 }
+.footer-meta { display: block; margin-top: 2px; opacity: 0.85; }
 
 .page-head {
   display: flex;

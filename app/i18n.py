@@ -33,6 +33,11 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Docker Update UI · Alpine-Container mit Zugriff auf",
         "Docker Update UI · Alpine container with access to",
     ),
+    "footer.version": (
+        "Version {version} · Commit {commit}",
+        "version {version} · commit {commit}",
+    ),
+    "footer.commit_unknown": ("unbekannt", "unknown"),
     "language.switch": ("Sprache", "Language"),
     # -------------------------------------------------------------- Übersicht
     "containers.title": ("Container", "Containers"),

@@ -77,6 +77,25 @@ image instead, replace the `image:` line in `docker-compose.yml` with
 `kleinriese/docker-update-ui:latest` and drop the `build:` line, or use the
 `docker run` command shown above.
 
+The footer shows the version and the commit the running image was built from, so
+a deployment can be compared with the repository. Pass the commit when building,
+otherwise the footer says »commit unknown«:
+
+```bash
+GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build
+docker compose up -d --force-recreate
+```
+
+For a plain `docker build`:
+
+```bash
+docker build --build-arg GIT_COMMIT="$(git rev-parse --short HEAD)" \
+  -t kleinriese/docker-update-ui:1.3.0 .
+```
+
+Alternatively put `GIT_COMMIT=...` into `.env`; it is passed into the container
+and takes precedence over the value baked in at build time.
+
 ## Volumes and paths
 
 The application works with the paths it sees **inside its own container**.
@@ -210,6 +229,7 @@ only provide defaults:
 | `CSRF_PROTECTION` | `1` | `0` disables the origin check (only with other protection) |
 | `STOP_TIMEOUT` | `30` | Grace period when stopping a container |
 | `DOCKER_TIMEOUT` | `600` | HTTP timeout for Docker calls |
+| `GIT_COMMIT` | – | Commit shown in the footer (also a build argument) |
 | `SELF_CONTAINER` | hostname | Name/ID of the tool container (self-update guard) |
 | `UI_PORT` | `8080` | Host port mapped by `docker-compose.yml` |
 
@@ -264,6 +284,7 @@ app/
   config.py        settings, data directories, per-container options
   cron.py          cron expressions: validation and next run
   autocheck.py     scheduler, lightweight check, email notification
+  version.py       version number and build commit for the footer
   docker_ops.py    Docker API: list, pull, tagging, recreate, digest check
   i18n.py          German and English texts, language selection
   operations.py    update, snapshot, rollback and backup flows

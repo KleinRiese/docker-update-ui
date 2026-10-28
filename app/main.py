@@ -20,7 +20,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
 
-from . import auth, autocheck, config, docker_ops, i18n, operations, paths
+from . import (
+    auth,
+    autocheck,
+    config,
+    docker_ops,
+    i18n,
+    operations,
+    paths,
+    version,
+)
 from .jobs import jobs
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -66,6 +75,9 @@ def _status_label(context, value) -> str:
 
 
 templates.env.filters["statuslabel"] = _status_label
+
+templates.env.globals["app_version"] = version.VERSION
+templates.env.globals["app_commit"] = version.commit
 
 
 def render(
