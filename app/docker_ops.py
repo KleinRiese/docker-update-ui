@@ -90,12 +90,17 @@ def is_rollback_image(ref: str) -> bool:
     return image_tag(ref or "").startswith(f"{ROLLBACK_TAG}-")
 
 
+def is_fixed_digest(ref: str) -> bool:
+    """Image ist per Digest festgelegt und kann sich nicht ändern."""
+    return "@sha256:" in (ref or "") or bool(_IMAGE_ID_RE.match(ref or ""))
+
+
 def update_hint(ref: str) -> tuple[str, str]:
     """Kurzer Hinweis + CSS-Klasse für die Containerliste."""
     tag = image_tag(ref)
     if tag.startswith(f"{ROLLBACK_TAG}-"):
         return i18n.t("hint.rollback"), "rollback"
-    if "@sha256:" in (ref or "") or _IMAGE_ID_RE.match(ref or ""):
+    if is_fixed_digest(ref):
         return i18n.t("hint.fixed_digest"), "fixed"
     if tag in UPDATEABLE_TAGS:
         return i18n.t("hint.updateable"), "updateable"
@@ -249,7 +254,7 @@ def check_update(name: str, log=lambda message: None) -> dict:
     ref = (container.attrs.get("Config") or {}).get("Image") or ""
     running_image = container.attrs.get("Image")
 
-    if "@sha256:" in ref or _IMAGE_ID_RE.match(ref):
+    if is_fixed_digest(ref):
         return {
             "status": i18n.t("update.status.unknown"),
             "detail": i18n.t("update.digest_detail"),
@@ -357,7 +362,7 @@ def quick_check(name: str, log=lambda message: None) -> dict:
     container = client.containers.get(name)
     ref = (container.attrs.get("Config") or {}).get("Image") or ""
 
-    if "@sha256:" in ref or _IMAGE_ID_RE.match(ref):
+    if is_fixed_digest(ref):
         return {
             "state": "fixed",
             "updateable": False,

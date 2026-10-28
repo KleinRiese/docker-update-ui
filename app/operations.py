@@ -616,6 +616,31 @@ def prepare_update(container: str, settings: Settings, log=print) -> dict:
     return result
 
 
+def _store_check_state(container: str, image: str) -> None:
+    """Prüfergebnis nach einem Update auf den neuen Stand setzen.
+
+    Ohne diesen Schritt bliebe der alte Befund („Update verfügbar“) in der
+    Übersicht stehen, bis die nächste Prüfung läuft.
+    """
+    config.record_auto_check(
+        container,
+        {
+            "at": round(time.time(), 3),
+            "state": "current",
+            "target": image,
+            "method": "pull",
+            "remote": "",
+            "local": [],
+            "error": "",
+        },
+    )
+
+
+def _forget_check_state(container: str) -> None:
+    """Prüfergebnis verwerfen, nachdem das Image absichtlich gewechselt wurde."""
+    config.record_auto_check(container, None)
+
+
 def execute_update(container: str, settings: Settings, log=print) -> dict:
     """Kompletter Update-Ablauf inklusive Rollback-Punkt und Update."""
     detail = docker_ops.container_detail(container)
@@ -688,6 +713,8 @@ def execute_update(container: str, settings: Settings, log=print) -> dict:
     else:
         log(i18n.t("op.summary.no_backup"))
     log(i18n.t("op.summary.script", path=paths["script"]))
+
+    _store_check_state(container, new_image)
 
     return {
         "container": container,
@@ -803,6 +830,8 @@ def execute_switch_tag(
     else:
         log(i18n.t("op.summary.no_backup"))
     log(i18n.t("op.summary.script", path=point["paths"]["script"]))
+
+    _forget_check_state(container)
 
     return {
         "container": container,
@@ -986,6 +1015,7 @@ def execute_rollback(
         docker_ops.start_container(container, log)
 
     log(i18n.t("op.rollback_done"))
+    _forget_check_state(container)
     return {
         "container": container,
         "image": plan["image"],

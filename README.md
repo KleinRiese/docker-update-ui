@@ -146,6 +146,10 @@ Each container can be checked automatically:
 - **Check now** runs the lightweight check immediately, without waiting for the
   schedule.
 
+Fixed tags are checked as well: a registry may re-publish the same tag, and the
+digest comparison catches that. Only an image pinned by digest (`repo@sha256:…`)
+is immutable and therefore skipped.
+
 The check compares the registry manifest digest with the digest of the image
 the container is **running** – not with the image the tag currently points to.
 A new image that was already pulled locally therefore still counts as an
@@ -157,11 +161,13 @@ credentials the Docker daemon already has.
 
 The scheduler runs as a thread inside the tool container: it looks every 30
 seconds for due entries, skips containers with a running job, the tool's own
-container, rollback tags and fixed tags. Missed runs are caught up once after a
-restart, not collected. Times use the container's time zone (`TZ`).
+container, rollback tags and images pinned by digest. Missed runs are caught up
+once after a restart, not collected. Times use the container's time zone (`TZ`).
 
 Results appear on the container page (last run, method, compared digests, next
-run) and in the overview table. The »check and notify« action and automatic
+run) and in the overview table. A manual update replaces the stored result with
+»up to date«, a rollback or tag switch clears it, so a stale »update available«
+badge never survives an image change. The »check and notify« action and automatic
 updates send an email through the SMTP server from the settings:
 
 ```

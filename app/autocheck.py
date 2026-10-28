@@ -44,12 +44,18 @@ def state_label(state: str | None, lang: str | None = None) -> tuple[str, str]:
 
 
 def skip_reason(detail: dict) -> str | None:
-    """Warum für diesen Container nicht automatisch geprüft wird."""
+    """Warum für diesen Container nicht automatisch geprüft wird.
+
+    Ein festes Tag ist kein Hindernis: die Registry kann es neu vergeben,
+    deshalb wird auch dort geprüft (Digest-Abgleich, sonst per Pull). Nur ein
+    festgeschriebener Digest kann sich überhaupt nicht ändern.
+    """
+    image = detail.get("image") or ""
     if detail.get("is_self"):
         return i18n.t("auto.skip_self")
-    if docker_ops.is_rollback_image(detail.get("image") or ""):
+    if docker_ops.is_rollback_image(image):
         return i18n.t("auto.skip_rollback")
-    if detail.get("hint_class") != "updateable":
+    if docker_ops.is_fixed_digest(image):
         return i18n.t("auto.skip_fixed")
     return None
 

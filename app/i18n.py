@@ -318,10 +318,12 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "auto.hint": (
         "Der Zeitplan läuft im Tool-Container, solange dieser läuft. Geprüft "
         "wird über den Manifest-Digest der Registry – das Image wird dabei "
-        "nicht heruntergeladen.",
+        "nicht heruntergeladen. Auch Container mit festem Tag werden geprüft; "
+        "ist kein Digest-Abgleich möglich, wird das Image gepullt.",
         "The schedule runs inside the tool container while it is running. "
         "Checks compare the registry manifest digest – the image is not "
-        "downloaded.",
+        "downloaded. Containers with a fixed tag are checked too; if the "
+        "digest comparison is not possible, the image is pulled.",
     ),
     "auto.enable": (
         "Automatische Prüfung aktivieren",
@@ -389,8 +391,8 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Rollback tag active – this container is not checked automatically.",
     ),
     "auto.skip_fixed": (
-        "Fester Tag oder Digest – es gibt kein bewegliches Tag zum Vergleichen.",
-        "Fixed tag or digest – there is no moving tag to compare against.",
+        "Fester Digest – dieses Image kann sich nicht ändern.",
+        "Fixed digest – this image cannot change.",
     ),
     "auto.checking": (
         "Prüfe {ref} gegen die Registry ...",

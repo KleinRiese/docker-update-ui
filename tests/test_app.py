@@ -988,6 +988,52 @@ def test_update_without_data_backup_uses_native_path(tmp_path, monkeypatch):
     assert "tar -xzf" not in script
 
 
+def test_manual_update_replaces_stale_check_result(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    config.set_backup_data("stateless", False)
+    calls: list[tuple] = []
+    _patch_docker(monkeypatch, calls, _stateless_detail())
+    monkeypatch.setattr(config, "get_data_dir", lambda name: None)
+    config.record_auto_check(
+        "stateless",
+        {"at": time.time(), "state": "available", "target": "nginx:latest"},
+    )
+    try:
+        operations.execute_update("stateless", settings, log=lambda message: None)
+        last = config.get_auto_check("stateless")["last"]
+        assert last["state"] == "current"
+        assert last["target"] == "nginx:latest"
+    finally:
+        config.record_auto_check("stateless", None)
+
+
+def test_tag_switch_clears_stale_check_result(tmp_path, monkeypatch):
+    settings = config.Settings(
+        backup_dir=str(tmp_path / "backups"),
+        browse_dir=str(tmp_path),
+        max_rollbacks=3,
+    )
+    config.set_backup_data("stateless", False)
+    calls: list[tuple] = []
+    _patch_docker(monkeypatch, calls, _stateless_detail())
+    monkeypatch.setattr(config, "get_data_dir", lambda name: None)
+    config.record_auto_check(
+        "stateless",
+        {"at": time.time(), "state": "available", "target": "nginx:latest"},
+    )
+    try:
+        operations.execute_switch_tag(
+            "stateless", "1.25", settings, log=lambda message: None
+        )
+        assert config.get_auto_check("stateless")["last"] is None
+    finally:
+        config.record_auto_check("stateless", None)
+
+
 def test_image_only_point_is_listed_and_restorable(tmp_path, monkeypatch):
     settings = config.Settings(
         backup_dir=str(tmp_path / "backups"),
@@ -1505,6 +1551,42 @@ def test_auto_check_skips_self_container(monkeypatch):
     assert config.get_auto_check("auto-self")["last"] is None
 
 
+def test_auto_check_runs_on_fixed_tag(monkeypatch):
+    detail = dict(CONTAINER_DETAIL, image="nginx:1.25", hint_class="fixed")
+    assert autocheck.skip_reason(detail) is None
+
+    calls: list[str] = []
+
+    def fake_check(name, log=print):
+        calls.append(name)
+        return {
+            "state": "current",
+            "updateable": False,
+            "target": "nginx:1.25",
+            "detail": "gleich",
+            "method": "registry",
+            "remote": "sha256:" + "a" * 64,
+            "local": ["sha256:" + "a" * 64],
+        }
+
+    monkeypatch.setattr(
+        autocheck.docker_ops, "container_detail", lambda name: dict(detail)
+    )
+    monkeypatch.setattr(autocheck.docker_ops, "quick_check", fake_check)
+    try:
+        result = autocheck.run_once("auto-fixed-tag", mode="check")
+    finally:
+        config.record_auto_check("auto-fixed-tag", None)
+    assert calls == ["auto-fixed-tag"]
+    assert result["state"] == "current"
+
+
+def test_auto_check_skips_fixed_digest():
+    ref = "nginx@sha256:" + "a" * 64
+    detail = dict(CONTAINER_DETAIL, image=ref, hint_class="fixed")
+    assert "Digest" in (autocheck.skip_reason(detail) or "")
+
+
 def _smtp_settings(original, **overrides):
     values = dict(
         backup_dir=original.backup_dir,
@@ -1689,6 +1771,25 @@ def test_detail_shows_auto_check_panel(logged_in, monkeypatch):
     page = logged_in.get("/containers/web")
     assert "Automatic update check" in page.text
     assert "Schedule (cron)" in page.text
+
+
+def test_detail_offers_schedule_for_fixed_tag(logged_in, monkeypatch):
+    detail = dict(CONTAINER_DETAIL, image="nginx:1.25", hint_class="fixed")
+    monkeypatch.setattr(docker_ops, "container_detail", lambda name: detail)
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+    page = logged_in.get("/containers/web")
+    assert 'action="/containers/web/auto-check"' in page.text
+    assert "kein bewegliches Tag" not in page.text
+
+
+def test_detail_hides_schedule_for_digest_pin(logged_in, monkeypatch):
+    ref = "nginx@sha256:" + "a" * 64
+    detail = dict(CONTAINER_DETAIL, image=ref, hint_class="fixed")
+    monkeypatch.setattr(docker_ops, "container_detail", lambda name: detail)
+    monkeypatch.setattr(operations, "list_backups", lambda name, settings: _backups())
+    page = logged_in.get("/containers/web")
+    assert 'action="/containers/web/auto-check"' not in page.text
+    assert "dieses Image kann sich nicht ändern" in page.text
 
 
 def test_detail_shows_next_run_and_last_result(logged_in, monkeypatch):
